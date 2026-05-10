@@ -299,10 +299,11 @@ def evaluate(model, args):
     print(f"  macro F1 : {f1:.2f}%")
 
     if args.save:
-        os.makedirs("outputs", exist_ok=True)
+        out_dir = os.path.join(os.path.dirname(__file__), "..", "outputs")
+        os.makedirs(out_dir, exist_ok=True)
         tag = args.num_processes
 
-        csv_path = f"outputs/cifar10_par_baseline_{tag}.csv"
+        csv_path = os.path.join(out_dir, f"cifar10_par_baseline_{tag}.csv")
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["metric", "value"])
@@ -330,7 +331,7 @@ def evaluate(model, args):
                 ax.text(j, i, str(cm[i, j]), ha="center", va="center",
                         color="white" if cm[i, j] > cm.max() / 2 else "black")
         fig.tight_layout()
-        png_path = f"outputs/cifar10_par_baseline_{tag}_cm.png"
+        png_path = os.path.join(out_dir, f"cifar10_par_baseline_{tag}_cm.png")
         fig.savefig(png_path, dpi=150)
         plt.close(fig)
         print(f"  confusion matrix saved to {png_path}")
