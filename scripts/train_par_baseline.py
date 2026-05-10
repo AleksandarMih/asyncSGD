@@ -23,6 +23,10 @@ import os
 import sys
 import time
 
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -274,113 +278,64 @@ _CIFAR10_CLASSES = (
 
 
 def evaluate(model, args):
-    """
-    Evaluate the shared model on the CIFAR-10 test set and report:
-      - overall accuracy
-      - per-class and macro-averaged precision, recall, F1
-      - test loss
-
-    All metrics are derived from a 10×10 confusion matrix built over the full
-    test set.  If args.save is True the results are written to:
-      outputs/cifar10_par_baseline_<num_processes>.csv
-    """
-    num_classes = len(_CIFAR10_CLASSES)
     model.eval()
     test_loader = get_test_loader(args.data_root, batch_size=256)
 
-    conf = torch.zeros(num_classes, num_classes, dtype=torch.long)
-    total_loss = 0.0
-    total = 0
-
+    all_targets, all_preds = [], []
     with torch.no_grad():
         for data, target in test_loader:
-            output = model(data)
-            total_loss += F.cross_entropy(output, target, reduction="sum").item()
-            preds = output.argmax(dim=1)
-            for t, p in zip(target.view(-1), preds.view(-1)):
-                conf[t.item(), p.item()] += 1
-            total += target.size(0)
+            preds = model(data).argmax(dim=1)
+            all_targets.append(target.numpy())
+            all_preds.append(preds.numpy())
 
-    avg_loss = total_loss / total
-    accuracy = 100.0 * conf.diagonal().sum().item() / total
+    y_true = np.concatenate(all_targets)
+    y_pred = np.concatenate(all_preds)
 
-    # Per-class precision, recall, F1 from the confusion matrix.
-    # TP_c = conf[c, c]
-    # FP_c = conf[:, c].sum() - conf[c, c]   (predicted c but not c)
-    # FN_c = conf[c, :].sum() - conf[c, c]   (is c but not predicted c)
-    per_class = []
-    for c in range(num_classes):
-        tp = conf[c, c].item()
-        fp = conf[:, c].sum().item() - tp
-        fn = conf[c, :].sum().item() - tp
-        support = conf[c, :].sum().item()
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1        = (2 * precision * recall / (precision + recall)
-                     if (precision + recall) > 0 else 0.0)
-        per_class.append({
-            "class":     _CIFAR10_CLASSES[c],
-            "precision": precision,
-            "recall":    recall,
-            "f1":        f1,
-            "support":   support,
-        })
+    acc = 100.0 * accuracy_score(y_true, y_pred)
+    f1  = 100.0 * f1_score(y_true, y_pred, average="macro")
 
-    macro_precision = sum(r["precision"] for r in per_class) / num_classes
-    macro_recall    = sum(r["recall"]    for r in per_class) / num_classes
-    macro_f1        = sum(r["f1"]        for r in per_class) / num_classes
+    print(f"\n[Evaluation]")
+    print(f"  accuracy : {acc:.2f}%")
+    print(f"  macro F1 : {f1:.2f}%")
 
-    # ── Console output ─────────────────────────────────────────────────────
-    col = 14
-    print(f"\n[Evaluation]  test loss: {avg_loss:.4f}")
-    print(f"  {'accuracy':<{col}}: {accuracy:.2f}%")
-    print(f"  {'macro precision':<{col}}: {100*macro_precision:.2f}%")
-    print(f"  {'macro recall':<{col}}: {100*macro_recall:.2f}%")
-    print(f"  {'macro F1':<{col}}: {100*macro_f1:.2f}%")
-    print()
-    print(f"  {'class':<12}  {'precision':>9}  {'recall':>9}  {'f1':>9}  {'support':>8}")
-    print(f"  {'-'*12}  {'-'*9}  {'-'*9}  {'-'*9}  {'-'*8}")
-    for r in per_class:
-        print(f"  {r['class']:<12}  {r['precision']:>9.4f}  "
-              f"{r['recall']:>9.4f}  {r['f1']:>9.4f}  {r['support']:>8}")
-    print(f"  {'macro avg':<12}  {macro_precision:>9.4f}  "
-          f"{macro_recall:>9.4f}  {macro_f1:>9.4f}  {total:>8}")
-
-    # ── Optional CSV save ──────────────────────────────────────────────────
     if args.save:
         os.makedirs("outputs", exist_ok=True)
-        csv_path = f"outputs/cifar10_par_baseline_{args.num_processes}.csv"
+        tag = args.num_processes
+
+        csv_path = f"outputs/cifar10_par_baseline_{tag}.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            # Summary block
             writer.writerow(["metric", "value"])
             writer.writerow(["num_processes", args.num_processes])
-            writer.writerow(["test_loss",       f"{avg_loss:.6f}"])
-            writer.writerow(["accuracy",        f"{accuracy:.4f}"])
-            writer.writerow(["macro_precision", f"{macro_precision:.6f}"])
-            writer.writerow(["macro_recall",    f"{macro_recall:.6f}"])
-            writer.writerow(["macro_f1",        f"{macro_f1:.6f}"])
-            writer.writerow([])
-            # Per-class block
-            writer.writerow(["class", "precision", "recall", "f1", "support"])
-            for r in per_class:
-                writer.writerow([
-                    r["class"],
-                    f"{r['precision']:.6f}",
-                    f"{r['recall']:.6f}",
-                    f"{r['f1']:.6f}",
-                    r["support"],
-                ])
-            writer.writerow([
-                "macro avg",
-                f"{macro_precision:.6f}",
-                f"{macro_recall:.6f}",
-                f"{macro_f1:.6f}",
-                total,
-            ])
-        print(f"\n  Metrics saved to {csv_path}")
+            writer.writerow(["accuracy", f"{acc:.4f}"])
+            writer.writerow(["macro_f1", f"{f1:.4f}"])
+        print(f"  metrics saved to {csv_path}")
 
-    return accuracy, macro_precision, macro_recall, macro_f1
+        cm = confusion_matrix(y_true, y_pred)
+        fig, ax = plt.subplots(figsize=(8, 7))
+        im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
+        fig.colorbar(im, ax=ax)
+        ax.set(
+            xticks=range(len(_CIFAR10_CLASSES)),
+            yticks=range(len(_CIFAR10_CLASSES)),
+            xticklabels=_CIFAR10_CLASSES,
+            yticklabels=_CIFAR10_CLASSES,
+            xlabel="Predicted",
+            ylabel="True",
+            title=f"Confusion matrix ({args.num_processes} workers)",
+        )
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        for i in range(len(_CIFAR10_CLASSES)):
+            for j in range(len(_CIFAR10_CLASSES)):
+                ax.text(j, i, str(cm[i, j]), ha="center", va="center",
+                        color="white" if cm[i, j] > cm.max() / 2 else "black")
+        fig.tight_layout()
+        png_path = f"outputs/cifar10_par_baseline_{tag}_cm.png"
+        fig.savefig(png_path, dpi=150)
+        plt.close(fig)
+        print(f"  confusion matrix saved to {png_path}")
+
+    return acc, f1
 
 
 # ============================================================
