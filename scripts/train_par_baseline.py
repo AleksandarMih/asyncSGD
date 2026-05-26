@@ -37,7 +37,7 @@ import torchvision
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.model import resnet20
-from src.data import _train_transform, _test_transform
+from src.data import _train_transform, _test_transform, CIFAR10_CLASSES
 
 
 def parse_args():
@@ -126,6 +126,18 @@ def get_train_subset(rank: int, num_processes: int, data_root: str):
     return torch.utils.data.Subset(full_dataset, list(range(start, end)))
 
 
+def get_bn_train_loader(data_root: str, batch_size: int = 256):
+    # Uses _train_transform (same distribution as training) following the SWA
+    # convention for update_bn.  shuffle=False keeps the pass deterministic.
+    train_dataset = torchvision.datasets.CIFAR10(
+        root=data_root, train=True, download=False, transform=_train_transform,
+    )
+    return torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=0, pin_memory=False,
+    )
+
+
 def get_test_loader(data_root: str, batch_size: int = 256):
     test_dataset = torchvision.datasets.CIFAR10(
         root=data_root, train=False, download=False, transform=_test_transform,
@@ -180,6 +192,12 @@ def train_worker(rank: int, model, args, counter, lock):
     workers produce noisy statistics.  This is a known limitation of applying
     HogWild! to architectures with shared BatchNorm buffers.
     """
+    # Limit this worker to one intra-op compute thread.  With N workers the
+    # process pool therefore generates N threads total rather than N×cores,
+    # avoiding BLAS/OpenMP oversubscription.  This does NOT pin the process
+    # to a specific physical core — the OS may still migrate the thread.
+    torch.set_num_threads(1)
+
     torch.manual_seed(args.seed + rank)  # distinct shuffle order per worker
 
     subset = get_train_subset(rank, args.num_processes, args.data_root)
@@ -271,12 +289,6 @@ def train_worker(rank: int, model, args, counter, lock):
 # Section 5: Evaluation on test set (run in main process after join)
 # ============================================================
 
-_CIFAR10_CLASSES = (
-    "airplane", "automobile", "bird", "cat", "deer",
-    "dog", "frog", "horse", "ship", "truck",
-)
-
-
 def evaluate(model, args):
     model.eval()
     test_loader = get_test_loader(args.data_root, batch_size=256)
@@ -291,12 +303,14 @@ def evaluate(model, args):
     y_true = np.concatenate(all_targets)
     y_pred = np.concatenate(all_preds)
 
-    acc = 100.0 * accuracy_score(y_true, y_pred)
-    f1  = 100.0 * f1_score(y_true, y_pred, average="macro")
+    acc   = 100.0 * accuracy_score(y_true, y_pred)
+    error = 100.0 - acc
+    f1    = 100.0 * f1_score(y_true, y_pred, average="macro")
 
     print(f"\n[Evaluation]")
-    print(f"  accuracy : {acc:.2f}%")
-    print(f"  macro F1 : {f1:.2f}%")
+    print(f"  top-1 accuracy     : {acc:.2f}%")
+    print(f"  classification error: {error:.2f}%")
+    print(f"  macro F1           : {f1:.2f}%")
 
     if args.save:
         out_dir = os.path.join(os.path.dirname(__file__), "..", "outputs")
@@ -309,6 +323,7 @@ def evaluate(model, args):
             writer.writerow(["metric", "value"])
             writer.writerow(["num_processes", args.num_processes])
             writer.writerow(["accuracy", f"{acc:.4f}"])
+            writer.writerow(["classification_error", f"{error:.4f}"])
             writer.writerow(["macro_f1", f"{f1:.4f}"])
         print(f"  metrics saved to {csv_path}")
 
@@ -317,17 +332,17 @@ def evaluate(model, args):
         im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
         fig.colorbar(im, ax=ax)
         ax.set(
-            xticks=range(len(_CIFAR10_CLASSES)),
-            yticks=range(len(_CIFAR10_CLASSES)),
-            xticklabels=_CIFAR10_CLASSES,
-            yticklabels=_CIFAR10_CLASSES,
+            xticks=range(len(CIFAR10_CLASSES)),
+            yticks=range(len(CIFAR10_CLASSES)),
+            xticklabels=CIFAR10_CLASSES,
+            yticklabels=CIFAR10_CLASSES,
             xlabel="Predicted",
             ylabel="True",
             title=f"Confusion matrix ({args.num_processes} workers)",
         )
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-        for i in range(len(_CIFAR10_CLASSES)):
-            for j in range(len(_CIFAR10_CLASSES)):
+        for i in range(len(CIFAR10_CLASSES)):
+            for j in range(len(CIFAR10_CLASSES)):
                 ax.text(j, i, str(cm[i, j]), ha="center", va="center",
                         color="white" if cm[i, j] > cm.max() / 2 else "black")
         fig.tight_layout()
@@ -336,7 +351,7 @@ def evaluate(model, args):
         plt.close(fig)
         print(f"  confusion matrix saved to {png_path}")
 
-    return acc, f1
+    return acc, error, f1
 
 
 # ============================================================
@@ -403,6 +418,13 @@ if __name__ == "__main__":
         f"\nAll {args.num_processes} workers finished in {elapsed:.1f}s  "
         f"({counter.value:,} total async gradient steps)"
     )
+
+    # Recompute BN running stats: concurrent worker writes during parallel
+    # training corrupt the shared running_mean/running_var buffers.
+    # update_bn resets and recalculates those buffers only — no weights or
+    # gradients are touched.  Called here in the main process after all
+    # workers have joined, so the pass is single-threaded and race-free.
+    torch.optim.swa_utils.update_bn(get_bn_train_loader(args.data_root), model)
 
     # ── Evaluate in the main process (no concurrent writes) ────────────────
     evaluate(model, args)
