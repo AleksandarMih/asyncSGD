@@ -52,12 +52,20 @@ def train_one_run_delayed(
     batch_size: int,
     device: torch.device,
     data_root: str,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, np.ndarray, float]:
     """Train a single ResNet-20 run with FIFO-delayed gradients; return per-epoch metrics.
 
     The grad_buffer deque persists across epoch boundaries so delay is truly
     τ batches regardless of where epoch boundaries fall (mirrors train_delayed_sgd.py:185).
     τ=0 reduces to standard SGD: the snapshot is appended and immediately popped.
+
+    Returns:
+        df_epoch: per-epoch DataFrame with columns epoch, train_loss, test_loss,
+            test_acc, test_error, weight_norm, mean_grad_sq.
+        grad_sq_per_step: 1-D float64 array; each entry is ‖stale_grad_t‖² for one
+            optimizer step (conv/linear weights only).  Length ≈ epochs*steps_per_epoch;
+            the first τ batches (buffer fill) contribute no entries.
+        w0_norm: scalar ‖w₀‖ computed before training begins.
     """
     # Reproducibility (mirrors train_delayed_sgd.py:163-165)
     random.seed(seed)
@@ -79,8 +87,15 @@ def train_one_run_delayed(
         nesterov=False,
     )
 
+    # Initial weight norm for theoretical bound (before any gradient step)
+    w0_norm = float(np.sqrt(sum(
+        p.pow(2).sum().item() for p in model.parameters() if p.requires_grad and p.dim() >= 2
+    )))
+
     # Buffer persists across epoch boundaries (mirrors train_delayed_sgd.py:185)
     grad_buffer: collections.deque = collections.deque()
+
+    grad_sq_per_step: list[float] = []
 
     records = []
     for epoch in range(1, epochs + 1):
@@ -88,6 +103,7 @@ def train_one_run_delayed(
         model.train()
         running_loss = 0.0
         n_batches = 0
+        epoch_grad_sq: list[float] = []
         pbar = tqdm(train_loader, desc=f"epoch {epoch}/{epochs}", leave=False)
         for inputs, targets in pbar:
             inputs, targets = inputs.to(device), targets.to(device)
@@ -108,6 +124,14 @@ def train_one_run_delayed(
             # Apply oldest snapshot once buffer depth exceeds τ (mirrors train_delayed_sgd.py:120-128)
             if len(grad_buffer) > tau:
                 stale = grad_buffer.popleft()
+                # Squared L2 norm of stale gradient (conv/linear weights only, same filter as weight_norm)
+                grad_sq = sum(
+                    g.pow(2).sum().item()
+                    for p, g in zip(model.parameters(), stale)
+                    if g is not None and p.dim() >= 2
+                )
+                grad_sq_per_step.append(grad_sq)
+                epoch_grad_sq.append(grad_sq)
                 for p, g in zip(model.parameters(), stale):
                     p.grad = g
                 optimizer.step()
@@ -124,6 +148,8 @@ def train_one_run_delayed(
             sum(p.pow(2).sum() for p in model.parameters() if p.requires_grad and p.dim() >= 2)
         ).item()
 
+        mean_grad_sq = float(np.mean(epoch_grad_sq)) if epoch_grad_sq else float("nan")
+
         records.append({
             "epoch": epoch,
             "train_loss": train_loss,
@@ -131,6 +157,7 @@ def train_one_run_delayed(
             "test_acc": test_acc,
             "test_error": test_error,
             "weight_norm": weight_norm,
+            "mean_grad_sq": mean_grad_sq,
         })
 
-    return pd.DataFrame(records)
+    return pd.DataFrame(records), np.array(grad_sq_per_step, dtype=np.float64), w0_norm
