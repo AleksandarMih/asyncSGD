@@ -178,6 +178,186 @@ def plot_C(stats: pd.DataFrame, out_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Plot Q1a — learning curves (test accuracy vs epoch) for β=0 and β=0.9
+# ---------------------------------------------------------------------------
+
+def plot_Q1_curves(df: pd.DataFrame, out_dir: str) -> None:
+    TAUS   = [0, 2, 5, 10, 20]
+    BETAS  = [0.0, 0.9]
+    TITLES = {0.0: "β = 0 (no momentum)", 0.9: "β = 0.9 (high momentum)"}
+
+    cmap   = plt.cm.Blues
+    colors = {tau: cmap(0.35 + 0.65 * i / (len(TAUS) - 1)) for i, tau in enumerate(TAUS)}
+
+    curves = (
+        df.groupby(["tau", "momentum", "epoch"])["test_acc"]
+        .agg(mean="mean", std="std")
+        .reset_index()
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+
+    for ax, beta in zip(axes, BETAS):
+        sub = curves[curves["momentum"] == beta]
+        for tau in TAUS:
+            grp = sub[sub["tau"] == tau].sort_values("epoch")
+            if grp.empty:
+                continue
+            col = colors[tau]
+            ax.plot(grp["epoch"], grp["mean"], color=col, linewidth=1.8,
+                    label=f"τ={tau}", zorder=3)
+            ax.fill_between(grp["epoch"],
+                            grp["mean"] - grp["std"].fillna(0),
+                            grp["mean"] + grp["std"].fillna(0),
+                            color=col, alpha=0.15, zorder=2)
+
+        for milestone in [30, 40]:
+            ax.axvline(milestone, color="gray", linestyle=":", linewidth=1.0, alpha=0.7)
+        ax.set_title(TITLES[beta], fontsize=11)
+        ax.set_xlabel("Epoch", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, framealpha=0.9)
+
+    axes[0].set_ylabel("Test accuracy (%)", fontsize=10)
+    fig.suptitle("Convergence curves: test accuracy vs epoch (deterministic delay)",
+                 fontsize=11, y=1.01)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_convergence_curves.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Plot Q1b — convergence speed metrics: epochs-to-threshold + normalised AUC
+# ---------------------------------------------------------------------------
+
+def plot_Q1_convergence_metrics(df: pd.DataFrame, out_dir: str) -> None:
+    TAUS       = [0, 2, 5, 10, 20]
+    THRESHOLDS = [80.0, 85.0]
+    BETA       = 0.0
+
+    curves = (
+        df[df["momentum"] == BETA]
+        .groupby(["tau", "epoch"])["test_acc"]
+        .mean()
+        .reset_index()
+    )
+
+    # --- epochs-to-threshold ---
+    epochs_to = {}
+    for tau in TAUS:
+        grp  = curves[curves["tau"] == tau].sort_values("epoch")
+        row  = {}
+        for thr in THRESHOLDS:
+            hit = grp[grp["test_acc"] >= thr]
+            row[thr] = int(hit["epoch"].iloc[0]) if not hit.empty else None
+        epochs_to[tau] = row
+
+    # --- normalised AUC ---
+    auc_vals = {}
+    for tau in TAUS:
+        grp = curves[curves["tau"] == tau].sort_values("epoch")
+        try:
+            _trapz = np.trapezoid
+        except AttributeError:
+            _trapz = lambda y, x: sum((y[i]+y[i+1])*(x[i+1]-x[i])/2 for i in range(len(y)-1))
+        auc_vals[tau] = _trapz(grp["test_acc"].values, grp["epoch"].values)
+    auc_norm = {tau: auc_vals[tau] / auc_vals[0] for tau in TAUS}
+
+    # --- plot ---
+    x      = np.arange(len(TAUS))
+    width  = 0.35
+    colors_thr = ["#4393c3", "#2166ac"]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    for i, thr in enumerate(THRESHOLDS):
+        vals = []
+        dnr_pos = []
+        for j, tau in enumerate(TAUS):
+            v = epochs_to[tau][thr]
+            if v is None:
+                vals.append(0)
+                dnr_pos.append(j)
+            else:
+                vals.append(v)
+        bars = ax1.bar(x + (i - 0.5) * width, vals, width,
+                       label=f"≥{thr:.0f}%", color=colors_thr[i], alpha=0.85)
+        for j in dnr_pos:
+            ax1.text(x[j] + (i - 0.5) * width, 3, "DNR",
+                     ha="center", va="bottom", fontsize=8, color="crimson",
+                     fontweight="bold")
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([f"τ={t}" for t in TAUS])
+    ax1.set_ylabel("First epoch ≥ threshold")
+    ax1.set_title("Epochs to reach accuracy threshold\n(β=0, DNR = did not reach)", fontsize=10)
+    ax1.legend(fontsize=9)
+    ax1.grid(True, axis="y", alpha=0.3)
+
+    auc_y = [auc_norm[t] for t in TAUS]
+    bar_colors = [plt.cm.Blues(0.35 + 0.65 * i / (len(TAUS) - 1)) for i in range(len(TAUS))]
+    ax2.bar(x, auc_y, color=bar_colors, alpha=0.85)
+    ax2.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.7, label="τ=0 baseline")
+    for j, (tau, v) in enumerate(zip(TAUS, auc_y)):
+        ax2.text(j, v + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=9)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([f"τ={t}" for t in TAUS])
+    ax2.set_ylabel("Normalised AUC (relative to τ=0)")
+    ax2.set_title("Training efficiency: area under learning curve\n(β=0, normalised to no-delay baseline)", fontsize=10)
+    ax2.legend(fontsize=9)
+    ax2.grid(True, axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_convergence_metrics.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Plot Q1c — train-test gap vs epoch (generalisation check, appendix)
+# ---------------------------------------------------------------------------
+
+def plot_Q1_gap(df: pd.DataFrame, out_dir: str) -> None:
+    TAUS = [0, 2, 5, 10, 20]
+    BETA = 0.0
+
+    sub = df[df["momentum"] == BETA].copy()
+    sub["gap"] = sub["train_acc"] - sub["test_acc"]
+
+    curves = (
+        sub.groupby(["tau", "epoch"])["gap"]
+        .mean()
+        .reset_index()
+    )
+
+    cmap   = plt.cm.Blues
+    colors = {tau: cmap(0.35 + 0.65 * i / (len(TAUS) - 1)) for i, tau in enumerate(TAUS)}
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for tau in TAUS:
+        grp = curves[curves["tau"] == tau].sort_values("epoch")
+        ax.plot(grp["epoch"], grp["gap"], color=colors[tau], linewidth=1.8,
+                label=f"τ={tau}")
+
+    for milestone in [30, 40]:
+        ax.axvline(milestone, color="gray", linestyle=":", linewidth=1.0, alpha=0.7)
+
+    ax.set_xlabel("Epoch", fontsize=10)
+    ax.set_ylabel("Train acc − Test acc (%)", fontsize=10)
+    ax.set_title("Generalisation gap vs epoch (β=0, deterministic delay)", fontsize=11)
+    ax.legend(fontsize=9, framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_train_test_gap.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
 # Summary table
 # ---------------------------------------------------------------------------
 
@@ -209,6 +389,9 @@ def main() -> None:
     plot_A(stats, args.out_dir)
     plot_B(df,    args.out_dir)
     plot_C(stats, args.out_dir)
+    plot_Q1_curves(df,                  args.out_dir)
+    plot_Q1_convergence_metrics(df,     args.out_dir)
+    plot_Q1_gap(df,                     args.out_dir)
 
 
 if __name__ == "__main__":

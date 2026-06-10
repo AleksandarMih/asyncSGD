@@ -29,7 +29,11 @@ and final accuracy; (2)~how does momentum interact with delay, does the
 delay distribution type matter, and can theory-guided scheduling recover
 lost performance; and (3)~whether gradient staleness acts as a regularizer
 analogous to dropout.
-% [Q1 TEAMMATE Ilia: one sentence summarising convergence findings]
+For question~1, we show that delay degrades accuracy monotonically under zero-momentum
+training ($-29.5$\,pp from $\tau{=}0$ to $\tau{=}20$), with convergence harm
+concentrated at LR-decay transitions where stale gradients cannot exploit
+the reduced step size; the normalised area under the learning curve falls to
+only 0.51 at $\tau{=}20$.
 For question~2, we show that $\beta{=}0.9$ collapses catastrophically under
 deterministic delay (dropping from 90.3\% to below 11\% at $\tau{=}20$),
 consistent with Liu et al.~\cite{liu2018momentum}.
@@ -73,7 +77,21 @@ interaction, and can theoretical guarantees guide adaptive schedule design?
 Third, can gradient noise from staleness act as a regularizer analogous
 to dropout, improving generalization?
 
-% [Q1 TEAMMATE Ilia: expand on question 1 and your contributions here]
+Our contributions for question~1 are:
+\begin{itemize}
+  \item Learning curves across $\tau \in \{0,2,5,10,20\}$ showing that delay
+        shifts convergence trajectories downward and rightward, with
+        disproportionate harm at LR-decay milestones: at $\tau{=}20$ the
+        model effectively stalls after epoch~30 because stale gradients
+        cannot track the post-decay landscape.
+  \item A convergence-speed analysis showing that the 80\% accuracy threshold
+        is reached at epoch~26 for $\tau{=}0$ but is never reached at
+        $\tau{=}20$; the 85\% threshold is unattainable beyond $\tau{=}5$.
+  \item Evidence that delay does not reduce the train-test gap, ruling out
+        an implicit-regularisation interpretation: staleness uniformly
+        degrades optimisation without changing the overfitting regime.
+\end{itemize}
+
 % [Q3 TEAMMATE Aleksandar: expand on question 3 and your contributions here]
 
 Our contributions for question~2 are:
@@ -113,7 +131,9 @@ Base learning rate $\eta{=}0.1$, decayed by $\times 0.1$ at epochs 30 and
 Every configuration is run with three random seeds \{42, 123, 456\}; we
 report mean $\pm$ standard deviation of final test accuracy.
 
-% [Q1 TEAMMATE Ilia: describe your experiment setup if it differs above]
+For question~1, we reuse the common setup above without modification.
+We analyse per-epoch \texttt{train\_acc} and \texttt{test\_acc} logged during
+the $\tau \times \beta$ deterministic grid sweep (45 runs, 3 seeds each).
 
 \subsection{Delay Simulation}
 
@@ -207,7 +227,98 @@ Geo~Exp~A tests the Mitliagkas equivalence under stochastic delay.
 \label{sec:results}
 % =========================================================================
 
-% [Q1 TEAMMATE Ilia: your convergence results subsection here]
+\subsection{Effect of Delay on Convergence}
+
+Figure~\ref{fig:q1-curves} shows per-epoch test accuracy for
+$\beta{=}0$ (no momentum) and $\beta{=}0.9$ across
+$\tau \in \{0,2,5,10,20\}$.
+
+\paragraph{Monotone accuracy degradation.}
+Under $\beta{=}0$, final test accuracy decreases monotonically with $\tau$:
+87.2\% ($\tau{=}0$), 86.9\% ($\tau{=}2$), 85.3\% ($\tau{=}5$), 81.6\%
+($\tau{=}10$), and 57.7\% ($\tau{=}20$).
+The degradation is gradual up to $\tau{=}10$ (roughly $-1$\,pp per unit
+delay) but becomes catastrophic at $\tau{=}20$, where the model fails to
+reduce training loss from the first epoch.
+
+\paragraph{Phase-specific convergence harm.}
+The LR decay at epoch~30 is the most sensitive phase.
+For small delays ($\tau \leq 5$), curves largely track the no-delay
+trajectory and the step reduction produces a sharp accuracy jump comparable
+to the baseline.
+At $\tau{=}10$, the response is muted.
+At $\tau{=}20$, the first LR decay has minimal effect: gradients computed
+on the pre-decay landscape are applied after the step size has dropped,
+and their direction is too misaligned to exploit the new regime.
+
+\paragraph{Convergence speed.}
+Figure~\ref{fig:q1-metrics} quantifies this more precisely.
+Under $\beta{=}0$, the 80\% accuracy threshold is first reached at
+epoch~26 for $\tau{=}0$ and epoch~31 for $\tau{=}10$;
+$\tau{=}20$ never reaches 80\%.
+The 85\% threshold becomes unreachable beyond $\tau{=}5$.
+The normalised area under the learning curve (AUC) captures both speed and
+ceiling in one scalar: it falls from 1.00 at $\tau{=}0$ to 0.81 at
+$\tau{=}10$ and 0.51 at $\tau{=}20$, meaning the model achieves only half
+the training efficiency of the no-delay baseline.
+
+\paragraph{No implicit regularisation.}
+Figure~\ref{fig:q1-gap} (Appendix) shows that the train-test accuracy gap
+remains roughly constant across all $\tau$ values.
+Delay does not reduce overfitting; it degrades optimisation without
+changing the generalisation regime.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_convergence_curves}
+  \caption{Test accuracy vs.\ epoch for $\beta{=}0$ (left) and $\beta{=}0.9$
+           (right) across $\tau \in \{0,2,5,10,20\}$ (deterministic delay).
+           Mean over 3 seeds, shading $\pm$std.
+           Dotted vertical lines mark LR decay milestones (epochs 30, 40).}
+  \label{fig:q1-curves}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_convergence_metrics}
+  \caption{Left: first epoch reaching 80\%/85\% test accuracy under
+           $\beta{=}0$ (DNR~= did not reach within 50 epochs).
+           Right: normalised AUC of the learning curve relative to the
+           $\tau{=}0$ baseline; $\tau{=}20$ retains only half the
+           training efficiency.}
+  \label{fig:q1-metrics}
+\end{figure}
+
+\paragraph{Geometric delay comparison.}
+Figures~\ref{fig:q1-geo-curves} and~\ref{fig:q1-geo-metrics} repeat the
+same analysis under geometric delay ($\tau_t \sim \mathrm{Geom}(1/M){-}1$).
+The qualitative pattern is preserved: accuracy degrades monotonically and
+the AUC falls with increasing average staleness.
+However, the degradation is less severe than under deterministic delay at
+the same expected staleness.
+For $\beta{=}0.9$, geometric delay is actually \emph{more} harmful because
+rare large-lag events destabilise momentum even at small $\mathrm{E}[\tau]$.
+This asymmetry is explored further in Section~\ref{sec:results}.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_convergence_curves}
+  \caption{Test accuracy vs.\ epoch for $\beta{=}0$ (left) and $\beta{=}0.9$
+           (right) across $\mathrm{E}[\tau] \in \{0,2,5,10,20\}$ (geometric
+           delay). Same layout as Fig.~\ref{fig:q1-curves}; degradation is
+           milder for $\beta{=}0$ but more severe for $\beta{=}0.9$.}
+  \label{fig:q1-geo-curves}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_convergence_metrics}
+  \caption{Epochs-to-threshold and normalised AUC under geometric delay
+           ($\beta{=}0$). Compared to deterministic delay
+           (Fig.~\ref{fig:q1-metrics}), geometric delay degrades AUC less
+           steeply, consistent with its lower variance.}
+  \label{fig:q1-geo-metrics}
+\end{figure}
 
 \subsection{Deterministic Delay: Momentum Collapse and Recovery}
 
@@ -375,7 +486,18 @@ Our results should therefore be interpreted as isolating the effect of
 \emph{delay magnitude and distribution on the optimization dynamics}, not
 as direct performance predictions for a production distributed system.
 
-% [Q1 TEAMMATE Ilia: your discussion paragraph here]
+Delay degrades convergence in a phase-specific rather than uniform manner.
+The LR-decay milestone at epoch~30 is the most sensitive point: gradients
+computed on the pre-decay landscape are applied after the step size has
+already dropped, and at high $\tau$ the mismatch prevents the model from
+capitalising on the smaller learning rate.
+Quantitatively, the normalised AUC falls to 0.51 at $\tau{=}20$, meaning
+the model achieves only half the training efficiency of the no-delay baseline
+over 50 epochs.
+This suggests that cosine or warmup-aware LR schedules, which change the
+step size gradually rather than in discrete steps, may be more robust to
+gradient staleness than the step-decay used here.
+
 % [Q3 TEAMMATE Aleksandar: your discussion paragraph here]
 
 % =========================================================================
@@ -389,7 +511,10 @@ dangerous for high momentum; an adaptive schedule calibrated to the Liu
 et al.\ bound recovers most lost accuracy under both regimes, with the
 empirically optimal point lying slightly above the conservative theoretical
 ceiling.
-% [Q1 TEAMMATE Ilia: one-sentence summary of your findings]
+Under zero-momentum training, delay degrades accuracy monotonically but
+unevenly, inflicting the greatest harm at LR-decay transitions where stale
+gradients cannot exploit the reduced step size; normalised AUC drops to 0.51
+at $\tau{=}20$ and the 80\% accuracy threshold is never reached.
 % [Q3 TEAMMATE Aleksandar: one-sentence summary of your findings]
 
 \section*{Acknowledgements}
@@ -458,6 +583,27 @@ Compute provided by the EPFL IC RunAI cluster.
            reference. \texttt{above\_bound} remains the best schedule
            under geometric delay, but with larger variance.}
   \label{fig:geo-adaptive}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_train_test_gap}
+  \caption{Train-test accuracy gap (train\,$-$\,test) vs.\ epoch for
+           $\beta{=}0$ across $\tau \in \{0,2,5,10,20\}$ (deterministic
+           delay). The gap is consistent across delay levels, indicating
+           that staleness degrades optimisation without acting as implicit
+           regularisation.}
+  \label{fig:q1-gap}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_train_test_gap}
+  \caption{Train-test accuracy gap vs.\ epoch for $\beta{=}0$ across
+           $\mathrm{E}[\tau] \in \{0,2,5,10,20\}$ (geometric delay).
+           The gap is consistent across delay levels, matching the
+           deterministic result (Fig.~\ref{fig:q1-gap}).}
+  \label{fig:q1-geo-gap}
 \end{figure}
 
 \end{document}

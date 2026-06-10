@@ -28,7 +28,8 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 
 STEP3_DET_DIR = "outputs/det_grid"
-GEO_GRID_DIR  = "outputs/geo_grid"
+GEO_GRID_DIR   = "outputs/geo_grid"
+GEO_LARGE_DIR  = "outputs/geo_large"
 GEO_THEORY_DIR = "outputs/geo_theory"
 STEP4_DIR     = "outputs/det_theory"
 
@@ -384,6 +385,263 @@ def plot_geo_L2(geo: pd.DataFrame, det: pd.DataFrame, out_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Q1 geo: learning curves (test accuracy vs epoch)
+# ---------------------------------------------------------------------------
+
+def plot_Q1_curves_geo(geo: pd.DataFrame, out_dir: str) -> None:
+    BETAS_PLOT = [0.0, 0.9]
+    TITLES = {0.0: "β = 0 (no momentum)", 0.9: "β = 0.9 (high momentum)"}
+    Ms = [1, 3, 6, 11, 21]   # E[τ] = 0, 2, 5, 10, 20
+
+    # grid data only (no adaptive schedules)
+    grid = geo[~geo.get("schedule", pd.Series(dtype=str)).isin(
+        ["at_bound", "below_bound", "above_bound", "neg_ramp"])].copy()
+    if grid.empty:
+        print("[skip] plot_Q1_curves_geo: no grid data")
+        return
+
+    cmap   = plt.cm.Blues
+    colors = {M: cmap(0.35 + 0.65 * i / (len(Ms) - 1)) for i, M in enumerate(Ms)}
+
+    curves = (
+        grid.groupby(["M", "momentum", "epoch"])["test_acc"]
+        .agg(mean="mean", std="std")
+        .reset_index()
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    for ax, beta in zip(axes, BETAS_PLOT):
+        sub = curves[curves["momentum"].round(2) == beta]
+        for M in Ms:
+            grp = sub[sub["M"] == M].sort_values("epoch")
+            if grp.empty:
+                continue
+            col   = colors[M]
+            etau  = M - 1
+            ax.plot(grp["epoch"], grp["mean"], color=col, linewidth=1.8,
+                    label=f"E[τ]={etau} (M={M})", zorder=3)
+            ax.fill_between(grp["epoch"],
+                            grp["mean"] - grp["std"].fillna(0),
+                            grp["mean"] + grp["std"].fillna(0),
+                            color=col, alpha=0.15, zorder=2)
+
+        for milestone in [30, 40]:
+            ax.axvline(milestone, color="gray", linestyle=":", linewidth=1.0, alpha=0.7)
+        ax.set_title(TITLES[beta], fontsize=11)
+        ax.set_xlabel("Epoch", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, framealpha=0.9)
+
+    axes[0].set_ylabel("Test accuracy (%)", fontsize=10)
+    fig.suptitle("Convergence curves: test accuracy vs epoch (geometric delay)",
+                 fontsize=11, y=1.01)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_geo_convergence_curves.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Q1 geo: convergence speed metrics (epochs-to-threshold + AUC)
+# ---------------------------------------------------------------------------
+
+def plot_Q1_convergence_metrics_geo(geo: pd.DataFrame, out_dir: str) -> None:
+    Ms         = [1, 3, 6, 11, 21]
+    THRESHOLDS = [80.0, 85.0]
+    BETA       = 0.0
+
+    grid = geo[~geo.get("schedule", pd.Series(dtype=str)).isin(
+        ["at_bound", "below_bound", "above_bound", "neg_ramp"])].copy()
+    if grid.empty:
+        print("[skip] plot_Q1_convergence_metrics_geo: no grid data")
+        return
+
+    curves = (
+        grid[grid["momentum"].round(2) == BETA]
+        .groupby(["M", "epoch"])["test_acc"]
+        .mean()
+        .reset_index()
+    )
+
+    epochs_to = {}
+    for M in Ms:
+        grp = curves[curves["M"] == M].sort_values("epoch")
+        row = {}
+        for thr in THRESHOLDS:
+            hit = grp[grp["test_acc"] >= thr]
+            row[thr] = int(hit["epoch"].iloc[0]) if not hit.empty else None
+        epochs_to[M] = row
+
+    try:
+        _trapz = np.trapezoid
+    except AttributeError:
+        _trapz = lambda y, x: sum((y[i]+y[i+1])*(x[i+1]-x[i])/2 for i in range(len(y)-1))
+
+    auc_vals = {}
+    for M in Ms:
+        grp = curves[curves["M"] == M].sort_values("epoch")
+        auc_vals[M] = _trapz(grp["test_acc"].values, grp["epoch"].values)
+    auc_norm = {M: auc_vals[M] / auc_vals[1] for M in Ms}   # normalise to M=1 (E[τ]=0)
+
+    x      = np.arange(len(Ms))
+    width  = 0.35
+    xlabels = [f"E[τ]={M-1}" for M in Ms]
+    colors_thr = ["#4393c3", "#2166ac"]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    for i, thr in enumerate(THRESHOLDS):
+        vals    = []
+        dnr_pos = []
+        for j, M in enumerate(Ms):
+            v = epochs_to[M][thr]
+            if v is None:
+                vals.append(0)
+                dnr_pos.append(j)
+            else:
+                vals.append(v)
+        ax1.bar(x + (i - 0.5) * width, vals, width,
+                label=f"≥{thr:.0f}%", color=colors_thr[i], alpha=0.85)
+        for j in dnr_pos:
+            ax1.text(x[j] + (i - 0.5) * width, 3, "DNR",
+                     ha="center", va="bottom", fontsize=8, color="crimson",
+                     fontweight="bold")
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(xlabels)
+    ax1.set_ylabel("First epoch ≥ threshold")
+    ax1.set_title("Epochs to reach accuracy threshold\n(β=0, geometric delay, DNR = did not reach)",
+                  fontsize=10)
+    ax1.legend(fontsize=9)
+    ax1.grid(True, axis="y", alpha=0.3)
+
+    bar_colors = [plt.cm.Blues(0.35 + 0.65 * i / (len(Ms) - 1)) for i in range(len(Ms))]
+    auc_y = [auc_norm[M] for M in Ms]
+    ax2.bar(x, auc_y, color=bar_colors, alpha=0.85)
+    ax2.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.7,
+                label="E[τ]=0 baseline")
+    for j, v in enumerate(auc_y):
+        ax2.text(j, v + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=9)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(xlabels)
+    ax2.set_ylabel("Normalised AUC (relative to E[τ]=0)")
+    ax2.set_title("Training efficiency: area under learning curve\n(β=0, geometric delay)",
+                  fontsize=10)
+    ax2.legend(fontsize=9)
+    ax2.grid(True, axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_geo_convergence_metrics.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Stability boundary: final accuracy vs E[τ] across full M range
+# ---------------------------------------------------------------------------
+
+def plot_geo_stability_boundary(geo_all: pd.DataFrame, out_dir: str) -> None:
+    """
+    Final test accuracy vs E[τ] for all M values (grid + large sweep combined),
+    one line per β. Shows where geometric delay causes convergence failure.
+    """
+    grid = geo_all[~geo_all.get("schedule", pd.Series(dtype=str)).isin(
+        ["at_bound", "below_bound", "above_bound", "neg_ramp"])].copy()
+    if grid.empty:
+        print("[skip] plot_geo_stability_boundary: no data")
+        return
+
+    BETAS_PLOT = [0.0, 0.5, 0.9]
+    COLORS_B   = {0.0: "#2166ac", 0.5: "#f4a261", 0.9: "#d62728"}
+    LABELS_B   = {0.0: "β = 0", 0.5: "β = 0.5", 0.9: "β = 0.9"}
+
+    agg = final_test_acc(grid, ["M", "momentum"])
+    agg["etau"] = agg["M"] - 1
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    for beta in BETAS_PLOT:
+        sub = agg[agg["momentum"].round(2) == beta].sort_values("etau")
+        if sub.empty:
+            continue
+        col = COLORS_B[beta]
+        ax.plot(sub["etau"], sub["mean_acc"], marker="o", color=col,
+                linewidth=2, markersize=6, label=LABELS_B[beta], zorder=3)
+        ax.fill_between(sub["etau"],
+                        sub["mean_acc"] - sub["std_acc"].fillna(0),
+                        sub["mean_acc"] + sub["std_acc"].fillna(0),
+                        color=col, alpha=0.15, zorder=2)
+        # annotate final point
+        last = sub.iloc[-1]
+        ax.annotate(f"{last['mean_acc']:.1f}%",
+                    xy=(last["etau"], last["mean_acc"]),
+                    xytext=(6, 0), textcoords="offset points",
+                    fontsize=8, color=col, va="center")
+
+    # mark random-chance floor
+    ax.axhline(10.0, color="gray", linestyle=":", linewidth=1.0, alpha=0.7)
+    ax.text(agg["etau"].max() * 0.02, 10.6, "random (10%)",
+            fontsize=8, color="gray")
+
+    ax.set_xlabel("E[τ] (average staleness)", fontsize=11)
+    ax.set_ylabel("Final test accuracy (%)", fontsize=11)
+    ax.set_title("Geometric delay stability boundary\n"
+                 "Finding E[τ] where geometric delay causes convergence failure",
+                 fontsize=11)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    path = os.path.join(out_dir, "plot_geo_stability_boundary.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
+# Q1 geo: train-test gap (appendix)
+# ---------------------------------------------------------------------------
+
+def plot_Q1_gap_geo(geo: pd.DataFrame, out_dir: str) -> None:
+    Ms   = [1, 3, 6, 11, 21]
+    BETA = 0.0
+
+    grid = geo[~geo.get("schedule", pd.Series(dtype=str)).isin(
+        ["at_bound", "below_bound", "above_bound", "neg_ramp"])].copy()
+    if grid.empty:
+        print("[skip] plot_Q1_gap_geo: no grid data")
+        return
+
+    sub      = grid[grid["momentum"].round(2) == BETA].copy()
+    sub["gap"] = sub["train_acc"] - sub["test_acc"]
+    curves   = sub.groupby(["M", "epoch"])["gap"].mean().reset_index()
+
+    cmap   = plt.cm.Blues
+    colors = {M: cmap(0.35 + 0.65 * i / (len(Ms) - 1)) for i, M in enumerate(Ms)}
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for M in Ms:
+        grp = curves[curves["M"] == M].sort_values("epoch")
+        ax.plot(grp["epoch"], grp["gap"], color=colors[M], linewidth=1.8,
+                label=f"E[τ]={M-1} (M={M})")
+
+    for milestone in [30, 40]:
+        ax.axvline(milestone, color="gray", linestyle=":", linewidth=1.0, alpha=0.7)
+    ax.set_xlabel("Epoch", fontsize=10)
+    ax.set_ylabel("Train acc − Test acc (%)", fontsize=10)
+    ax.set_title("Generalisation gap vs epoch (β=0, geometric delay)", fontsize=11)
+    ax.legend(fontsize=9, framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "plot_Q1_geo_train_test_gap.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+# ---------------------------------------------------------------------------
 # CLI and main
 # ---------------------------------------------------------------------------
 
@@ -416,6 +674,18 @@ def main():
         det4 = pd.DataFrame()
     print(f"  {len(det4)} rows from {STEP4_DIR}")
 
+    # Load large-M stability sweep if available
+    print("Loading geometric large-M data ...")
+    geo_large_files = glob.glob(os.path.join(GEO_LARGE_DIR, "exp*_geo_M*_beta*_seed*.csv"))
+    if geo_large_files:
+        geo_large = pd.concat([pd.read_csv(f) for f in geo_large_files], ignore_index=True)
+        print(f"  {len(geo_large)} rows from {GEO_LARGE_DIR}")
+        geo_all = pd.concat([geo, geo_large], ignore_index=True)
+    else:
+        print(f"  [none] {GEO_LARGE_DIR} not yet available")
+        geo_large = pd.DataFrame()
+        geo_all = geo.copy()
+
     # Merge geo expG data into geo df if present
     geo_g_files = glob.glob(os.path.join(GEO_THEORY_DIR, "expG_geo_M*_schedule*_seed*.csv"))
     if geo_g_files:
@@ -434,6 +704,10 @@ def main():
     plot_equivalence(geo, det4, args.out_dir)
     plot_adaptive(det, geo, args.out_dir)
     plot_geo_L2(geo, det, args.out_dir)
+    plot_Q1_curves_geo(geo,                     args.out_dir)
+    plot_Q1_convergence_metrics_geo(geo,         args.out_dir)
+    plot_Q1_gap_geo(geo,                         args.out_dir)
+    plot_geo_stability_boundary(geo_all,         args.out_dir)
 
     print("\nDone.")
 
