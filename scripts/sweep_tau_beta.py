@@ -27,6 +27,8 @@ from train import (
 )
 
 WEIGHT_DECAY = 0.0
+QUEUE        = "FIFO"          # "FIFO" or "GEOMETRIC"
+QTAG         = QUEUE.lower()   # used in all output filenames
 
 # ---------------------------------------------------------------------------
 # Sweep hyperparameters — edit here
@@ -35,13 +37,17 @@ WEIGHT_DECAY = 0.0
 TAUS = [0, 1, 2, 4, 6, 8, 10]
 MOMENTUMS = [0.0]
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "delayed_experiments_focused")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "delayed_experiments")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _delay_label(tau) -> str:
+    return f"M={int(tau)+1}" if QUEUE == "GEOMETRIC" else f"τ={tau}"
+
 
 def fmt_float(x: float) -> str:
     """Format a float for use in filenames (0.0 → '0.0', 0.0001 → '1e-04')."""
@@ -58,25 +64,33 @@ def plot_summary(summary_csv_paths: dict[float, str], save_dir: str) -> None:
     """Single 2-subplot figure: test_acc and test_error vs τ, one line per β."""
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
+    x_label = "Number of workers M" if QUEUE == "GEOMETRIC" else "Delay τ (batches)"
+    titles  = (
+        ("Test accuracy vs workers M",  "Test error vs workers M")
+        if QUEUE == "GEOMETRIC" else
+        ("Test accuracy vs delay τ", "Test error vs delay τ")
+    )
+
     for beta, csv_path in sorted(summary_csv_paths.items()):
         df = pd.read_csv(csv_path, index_col="tau")
         taus = df.index.to_numpy(dtype=float)
+        x_vals = taus + 1 if QUEUE == "GEOMETRIC" else taus
         label = f"β={fmt_float(beta)}"
 
-        for ax, metric, ylabel, title in [
-            (axes[0], "test_acc",   "Top-1 accuracy", "Test accuracy vs delay τ"),
-            (axes[1], "test_error", "Top-1 error",    "Test error vs delay τ"),
+        for ax, metric in [
+            (axes[0], "test_acc"),
+            (axes[1], "test_error"),
         ]:
             mean = df[f"mean_{metric}"].to_numpy()
             std  = df[f"std_{metric}"].to_numpy()
-            line, = ax.plot(taus, mean, marker="o", linewidth=1.5, label=label)
-            ax.fill_between(taus, mean - std, mean + std, alpha=0.2, color=line.get_color())
+            line, = ax.plot(x_vals, mean, marker="o", linewidth=1.5, label=label)
+            ax.fill_between(x_vals, mean - std, mean + std, alpha=0.2, color=line.get_color())
 
     for ax, ylabel, title in [
-        (axes[0], "Top-1 accuracy", "Test accuracy vs delay τ"),
-        (axes[1], "Top-1 error",    "Test error vs delay τ"),
+        (axes[0], "Top-1 accuracy", titles[0]),
+        (axes[1], "Top-1 error",    titles[1]),
     ]:
-        ax.set_xlabel("Delay τ (batches)")
+        ax.set_xlabel(x_label)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend(fontsize=8)
@@ -88,7 +102,7 @@ def plot_summary(summary_csv_paths: dict[float, str], save_dir: str) -> None:
     )
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "summary_tausweep.png")
+    out_path = os.path.join(save_dir, f"summary_tausweep_{QTAG}.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -105,7 +119,7 @@ def plot_weight_norm(traj_csv_paths: dict[float, str], save_dir: str) -> None:
             epochs = grp["epoch"].to_numpy()
             mean   = grp["mean_weight_norm"].to_numpy()
             std    = grp["std_weight_norm"].to_numpy()
-            line, = ax.plot(epochs, mean, linewidth=1.5, label=f"τ={tau}")
+            line, = ax.plot(epochs, mean, linewidth=1.5, label=_delay_label(tau))
             ax.fill_between(epochs, mean - std, mean + std, alpha=0.15, color=line.get_color())
 
         ax.set_xlabel("Epoch")
@@ -114,7 +128,7 @@ def plot_weight_norm(traj_csv_paths: dict[float, str], save_dir: str) -> None:
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
-        out_path = os.path.join(save_dir, f"weight_norm_tausweep_m_{fmt_float(beta)}.png")
+        out_path = os.path.join(save_dir, f"weight_norm_tausweep_m_{fmt_float(beta)}_{QTAG}.png")
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
         print(f"Saved {out_path}")
@@ -148,6 +162,8 @@ def main() -> None:
                     batch_size=BATCH_SIZE,
                     device=device,
                     data_root=DATA_ROOT,
+                    delay_type=("geometric" if QUEUE == "GEOMETRIC" else "fifo"),
+                    M=(tau + 1),
                 )
                 results[(beta, tau, seed)] = df
                 final = df.iloc[-1]
@@ -178,7 +194,7 @@ def main() -> None:
 
         summary_name = (
             f"test_delayed_d_{fmt_float(DROPOUT)}_wd_{fmt_float(WEIGHT_DECAY)}"
-            f"_m_{fmt_float(beta)}_tausweep.csv"
+            f"_m_{fmt_float(beta)}_tausweep_{QTAG}.csv"
         )
         summary_path = os.path.join(OUT_DIR, summary_name)
         summary_df.to_csv(summary_path)
@@ -203,7 +219,7 @@ def main() -> None:
 
         traj_name = (
             f"traj_delayed_d_{fmt_float(DROPOUT)}_wd_{fmt_float(WEIGHT_DECAY)}"
-            f"_m_{fmt_float(beta)}_tausweep.csv"
+            f"_m_{fmt_float(beta)}_tausweep_{QTAG}.csv"
         )
         traj_path = os.path.join(OUT_DIR, traj_name)
         traj_df.to_csv(traj_path, index=False)

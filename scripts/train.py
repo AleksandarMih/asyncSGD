@@ -430,12 +430,19 @@ def train_one_run_delayed(
     device: torch.device,
     data_root: str,
     num_workers: int = 2,
+    delay_type: str = "fifo",
+    M: int = 1,
+    rng: np.random.Generator | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray, float]:
-    """Train ResNet-20 with FIFO-delayed gradients; return per-epoch metrics.
+    """Train ResNet-20 with delayed gradients; return per-epoch metrics.
 
     The grad_buffer deque persists across epoch boundaries so delay is truly
     τ batches regardless of where epoch boundaries fall.
     τ=0 reduces to standard SGD.
+
+    delay_type='fifo'      — deterministic FIFO queue; lag = τ batches.
+    delay_type='geometric' — τ_t ~ Geom(1/M)−1 per step; sliding window of 5M.
+                             Set M = τ + 1 so E[τ_t] = τ matches the FIFO nominal.
 
     Returns:
         df_epoch: per-epoch DataFrame with columns epoch, train_loss, test_loss,
@@ -451,6 +458,9 @@ def train_one_run_delayed(
         torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+    if rng is None:
+        rng = np.random.default_rng(seed)
 
     train_loader, test_loader = get_loaders(data_root, batch_size, num_workers)
     model = resnet20(dropout=dropout).to(device)
@@ -484,8 +494,12 @@ def train_one_run_delayed(
                 for p in model.parameters()
             ]
             grad_buffer.append(snapshot)
-            if len(grad_buffer) > tau:
-                stale = grad_buffer.popleft()
+            if delay_type == "geometric":
+                while len(grad_buffer) > 5 * M:
+                    grad_buffer.popleft()
+                tau_t = int(rng.geometric(p=1.0 / M)) - 1
+                tau_t = min(tau_t, len(grad_buffer) - 1)
+                stale = grad_buffer[-(tau_t + 1)]
                 grad_sq = sum(
                     g.pow(2).sum().item()
                     for p, g in zip(model.parameters(), stale)
@@ -496,6 +510,19 @@ def train_one_run_delayed(
                 for p, g in zip(model.parameters(), stale):
                     p.grad = g
                 optimizer.step()
+            else:  # fifo
+                if len(grad_buffer) > tau:
+                    stale = grad_buffer.popleft()
+                    grad_sq = sum(
+                        g.pow(2).sum().item()
+                        for p, g in zip(model.parameters(), stale)
+                        if g is not None and p.dim() >= 2
+                    )
+                    grad_sq_per_step.append(grad_sq)
+                    epoch_grad_sq.append(grad_sq)
+                    for p, g in zip(model.parameters(), stale):
+                        p.grad = g
+                    optimizer.step()
             running_loss += loss.item()
             n_batches += 1
         train_loss = running_loss / n_batches

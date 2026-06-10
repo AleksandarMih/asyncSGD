@@ -33,7 +33,7 @@ from train import (
 DROPOUT_RATES = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
 L2_LAMBDA = 0.0
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline_focused")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
@@ -79,7 +79,7 @@ def plot_summary(summary_csv_path: str, save_dir: str) -> None:
     )
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "summary_dropoutsweep_m_0.9.png")
+    out_path = os.path.join(save_dir, "summary_dropoutsweep.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -107,7 +107,7 @@ def plot_weight_norm(traj_csv_path: str, save_dir: str) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "weight_norm_dropoutsweep_m_0.9.png")
+    out_path = os.path.join(save_dir, "weight_norm_dropoutsweep.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")

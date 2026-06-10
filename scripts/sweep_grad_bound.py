@@ -30,10 +30,12 @@ from train import (
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
-TAUS         = [0, 1, 2, 4, 8]
+TAUS         = [0, 1, 2, 4, 8, 10]
 MOMENTUM     = 0.0
 WEIGHT_DECAY = 0.0
 DROPOUT      = 0.0
+QUEUE        = "FIFO"          # "FIFO" or "GEOMETRIC"
+QTAG         = QUEUE.lower()   # used in all output filenames
 
 OUT_DIR  = os.path.join(_SCRIPTS_DIR, "..", "outputs", "grad_bound")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
@@ -42,6 +44,10 @@ PLOT_DIR = os.path.join(OUT_DIR, "plots")
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
+
+def _delay_label(tau) -> str:
+    return f"M={int(tau)+1}" if QUEUE == "GEOMETRIC" else f"τ={tau}"
+
 
 def plot_grad_bound(
     traj_csv_path: str,
@@ -57,7 +63,7 @@ def plot_grad_bound(
 
     for tau, grp in df.groupby("tau"):
         epochs = grp["epoch"].to_numpy()
-        label = f"τ={tau}"
+        label = _delay_label(tau)
 
         # Left: weight norm
         mean_wn = grp["mean_weight_norm"].to_numpy()
@@ -92,7 +98,7 @@ def plot_grad_bound(
 
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "grad_bound.png")
+    out_path = os.path.join(save_dir, f"grad_bound_{QTAG}.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -109,7 +115,7 @@ def plot_weight_norm(
         epochs  = grp["epoch"].to_numpy()
         mean_wn = grp["mean_weight_norm"].to_numpy()
         std_wn  = grp["std_weight_norm"].to_numpy()
-        ax.plot(epochs, mean_wn, label=f"τ={tau}", linewidth=1.5)
+        ax.plot(epochs, mean_wn, label=_delay_label(tau), linewidth=1.5)
         ax.fill_between(epochs, mean_wn - std_wn, mean_wn + std_wn, alpha=0.15)
 
     if bound_y is not None:
@@ -150,6 +156,8 @@ def main() -> None:
                 batch_size=BATCH_SIZE,
                 device=device,
                 data_root=DATA_ROOT,
+                delay_type=("geometric" if QUEUE == "GEOMETRIC" else "fifo"),
+                M=(tau + 1),
             )
             results[(tau, seed)] = (df, grad_sq, w0_norm)
             final = df.iloc[-1]
@@ -177,7 +185,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Save G estimate artifact
     # ------------------------------------------------------------------
-    g_est_path = os.path.join(OUT_DIR, "G_estimate.txt")
+    g_est_path = os.path.join(OUT_DIR, f"G_estimate_{QTAG}.txt")
     with open(g_est_path, "w") as fh:
         fh.write(f"G             = {G}\n")
         fh.write(f"g_sq_95th_pct = {g_sq_95}\n")
@@ -199,7 +207,7 @@ def main() -> None:
         summary_rows.append(row)
     summary_df = pd.DataFrame(summary_rows).set_index("tau")
 
-    summary_path = os.path.join(OUT_DIR, "summary_grad_bound.csv")
+    summary_path = os.path.join(OUT_DIR, f"summary_grad_bound_{QTAG}.csv")
     summary_df.to_csv(summary_path)
     print(f"Saved {summary_path}")
 
@@ -223,7 +231,7 @@ def main() -> None:
             traj_rows.append(row)
     traj_df = pd.DataFrame(traj_rows)
 
-    traj_path = os.path.join(OUT_DIR, "traj_grad_bound.csv")
+    traj_path = os.path.join(OUT_DIR, f"traj_grad_bound_{QTAG}.csv")
     traj_df.to_csv(traj_path, index=False)
     print(f"Saved {traj_path}")
 
@@ -243,7 +251,7 @@ def main() -> None:
     plot_weight_norm(traj_df, ax, bound_y=None, bound_label=None)
     ax.set_title("Weight norm vs epoch  |  β=0  wd=0")
     fig.tight_layout()
-    out_path = os.path.join(PLOT_DIR, "weight_norm_no_bound.png")
+    out_path = os.path.join(PLOT_DIR, f"weight_norm_no_bound_{QTAG}.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -255,7 +263,7 @@ def main() -> None:
                      bound_label="Bound: ‖w₀‖ + η G log(1+t)")
     ax.set_title("Weight norm — log bound  |  β=0  wd=0")
     fig.tight_layout()
-    out_path = os.path.join(PLOT_DIR, "weight_norm_bound_log.png")
+    out_path = os.path.join(PLOT_DIR, f"weight_norm_bound_log_{QTAG}.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -267,7 +275,7 @@ def main() -> None:
                      bound_label="Bound: ‖w₀‖ + η G · epoch")
     ax.set_title("Weight norm — epoch bound  |  β=0  wd=0")
     fig.tight_layout()
-    out_path = os.path.join(PLOT_DIR, "weight_norm_bound_epoch.png")
+    out_path = os.path.join(PLOT_DIR, f"weight_norm_bound_epoch_{QTAG}.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
