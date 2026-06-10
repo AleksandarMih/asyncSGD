@@ -30,7 +30,7 @@ from seq_training import (
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
-L2_LAMBDAS = [0.0, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e-0]
+L2_LAMBDAS = [0.0, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]
 DROPOUT = 0.0
 
 OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline")

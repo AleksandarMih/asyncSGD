@@ -26,7 +26,7 @@ from src.model import resnet20
 EPOCHS = 100
 LR = 0.1
 BATCH_SIZE = 128
-MOMENTUM = 0.9
+MOMENTUM = 0
 SEEDS = [42, 123, 456]
 DATA_ROOT = "data"
 NUM_WORKERS = 2

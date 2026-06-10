@@ -30,10 +30,10 @@ from seq_training import (
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
-DROPOUT_RATES = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+DROPOUT_RATES = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
 L2_LAMBDA = 0.0
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline_focused")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
