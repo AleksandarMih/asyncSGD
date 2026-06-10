@@ -8,6 +8,7 @@ import os
 import sys
 
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
 import torch
@@ -95,6 +96,31 @@ def plot_grad_bound(
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
+
+
+def plot_weight_norm(
+    df: pd.DataFrame,
+    ax: Axes,
+    bound_y: np.ndarray | None,
+    bound_label: str | None,
+) -> None:
+    """Single-axes weight-norm plot, optionally with a bound overlay."""
+    for tau, grp in df.groupby("tau"):
+        epochs  = grp["epoch"].to_numpy()
+        mean_wn = grp["mean_weight_norm"].to_numpy()
+        std_wn  = grp["std_weight_norm"].to_numpy()
+        ax.plot(epochs, mean_wn, label=f"τ={tau}", linewidth=1.5)
+        ax.fill_between(epochs, mean_wn - std_wn, mean_wn + std_wn, alpha=0.15)
+
+    if bound_y is not None:
+        epochs_all = np.arange(0, int(df["epoch"].max()) + 1)
+        ax.plot(epochs_all, bound_y, color="black", linestyle="--",
+                linewidth=1.5, label=bound_label)
+
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Weight L2 norm  ‖w‖")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +231,46 @@ def main() -> None:
     # Plot
     # ------------------------------------------------------------------
     plot_grad_bound(traj_path, PLOT_DIR, w0_mean=w0_mean, G=G, steps_per_epoch=steps_per_epoch)
+
+    # ------------------------------------------------------------------
+    # Three focused weight-norm plots (no bound / log bound / epoch bound)
+    # ------------------------------------------------------------------
+    epochs_all = np.arange(0, EPOCHS + 1)
+    t_steps    = epochs_all * steps_per_epoch
+
+    # 1. No bound
+    fig, ax = plt.subplots(figsize=(7, 5))
+    plot_weight_norm(traj_df, ax, bound_y=None, bound_label=None)
+    ax.set_title("Weight norm vs epoch  |  β=0  wd=0")
+    fig.tight_layout()
+    out_path = os.path.join(PLOT_DIR, "weight_norm_no_bound.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {out_path}")
+
+    # 2. Log bound: ‖w₀‖ + η·G·log(1 + t)
+    bound_log = w0_mean + LR * G * np.log1p(t_steps)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    plot_weight_norm(traj_df, ax, bound_y=bound_log,
+                     bound_label="Bound: ‖w₀‖ + η G log(1+t)")
+    ax.set_title("Weight norm — log bound  |  β=0  wd=0")
+    fig.tight_layout()
+    out_path = os.path.join(PLOT_DIR, "weight_norm_bound_log.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {out_path}")
+
+    # 3. Epoch bound: ‖w₀‖ + η·G·epoch
+    bound_epoch = w0_mean + LR * G * epochs_all
+    fig, ax = plt.subplots(figsize=(7, 5))
+    plot_weight_norm(traj_df, ax, bound_y=bound_epoch,
+                     bound_label="Bound: ‖w₀‖ + η G · epoch")
+    ax.set_title("Weight norm — epoch bound  |  β=0  wd=0")
+    fig.tight_layout()
+    out_path = os.path.join(PLOT_DIR, "weight_norm_bound_epoch.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {out_path}")
 
 
 if __name__ == "__main__":
