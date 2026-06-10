@@ -292,6 +292,98 @@ def plot_adaptive(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
 
 
 # ---------------------------------------------------------------------------
+# Plot geo-L2 — Exp G geo: final accuracy bar chart (mirrors det plot_L2)
+# ---------------------------------------------------------------------------
+
+SCHED_COLORS = {
+    "at_bound":    "#e6194b",
+    "below_bound": "#f58231",
+    "above_bound": "#3cb44b",
+    "neg_ramp":    "#4363d8",
+}
+SCHED_LABELS = {
+    "at_bound":    "at_bound",
+    "below_bound": "below_bound",
+    "above_bound": "above_bound",
+    "neg_ramp":    "neg_ramp",
+}
+
+def plot_geo_L2(geo: pd.DataFrame, det: pd.DataFrame, out_dir: str) -> None:
+    """
+    Grouped bar chart of final test accuracy under geometric delay:
+    one group per M value, one bar per schedule + β=0 and β=0.9 baselines.
+    Matches the layout of plot_L2_adaptive_summary for easy comparison.
+    """
+    Ms = [6, 11, 21]   # E[τ] = 5, 10, 20 — matches deterministic τ grid
+    schedules = ["at_bound", "below_bound", "above_bound", "neg_ramp"]
+
+    geo_g = geo[geo.get("schedule", pd.Series(dtype=str)).isin(schedules)] \
+        if "schedule" in geo.columns else pd.DataFrame()
+
+    if geo_g.empty:
+        print("plot_geo_L2: no Exp G geo data, skipping.")
+        return
+
+    bar_labels = schedules + ["β=0 (geo)", "β=0.9 (geo)"]
+    bar_colors = [SCHED_COLORS[s] for s in schedules] + ["#aaaaaa", "#666666"]
+    n_bars  = len(bar_labels)
+    x       = np.arange(len(Ms))
+    width   = 0.13
+    offsets = np.linspace(-(n_bars - 1) / 2, (n_bars - 1) / 2, n_bars) * width
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    for i, (label, color) in enumerate(zip(bar_labels, bar_colors)):
+        means, stds = [], []
+        for M in Ms:
+            if label in ("β=0 (geo)", "β=0.9 (geo)"):
+                beta = 0.0 if label == "β=0 (geo)" else 0.9
+                sub = geo[(geo["M"] == M)
+                          & (geo["momentum"].round(2) == beta)
+                          & (~geo.get("schedule", pd.Series(dtype=str)).isin(schedules))]
+            else:
+                sub = geo_g[(geo_g["M"] == M) & (geo_g["schedule"] == label)]
+            final = sub[sub["epoch"] == sub["epoch"].max()]["test_acc"] \
+                if not sub.empty else pd.Series(dtype=float)
+            means.append(final.mean() if not final.empty else float("nan"))
+            stds.append(final.std()   if len(final) > 1  else 0.0)
+
+        bars = ax.bar(x + offsets[i], means, width,
+                      yerr=stds, capsize=3,
+                      label=SCHED_LABELS.get(label, label),
+                      color=color, alpha=0.85)
+        for bar, mean in zip(bars, means):
+            if not np.isnan(mean):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + 0.4,
+                        f"{mean:.1f}", ha="center", va="bottom", fontsize=6)
+
+    # No-delay ceiling from deterministic τ=0, β=0.9
+    no_delay = det[(det["tau"] == 0) & (det["momentum"].round(2) == 0.9)]
+    if not no_delay.empty:
+        ceiling = no_delay[no_delay["epoch"] == no_delay["epoch"].max()]["test_acc"].mean()
+        ax.axhline(ceiling, color="black", linestyle="--", linewidth=1.4,
+                   label=f"τ=0, β=0.9 no-delay ceiling ({ceiling:.1f}%)")
+        ax.text(x[-1] + 0.55, ceiling + 0.3, f"{ceiling:.1f}%",
+                fontsize=7, va="bottom")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"M={M}  (E[τ]={M-1})" for M in Ms])
+    ax.set_ylabel("Final test accuracy (%)")
+    ax.set_title(
+        "Exp G (geometric delay): Final accuracy by M and momentum schedule\n"
+        "(dashed line = τ=0 no-delay ceiling; β=0 and β=0.9 geo baselines shown)"
+    )
+    ax.legend(fontsize=7, loc="lower left")
+    fig.tight_layout()
+
+    out = os.path.join(out_dir, "plot_geo_L2_adaptive_summary.png")
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+
+# ---------------------------------------------------------------------------
 # CLI and main
 # ---------------------------------------------------------------------------
 
@@ -341,6 +433,7 @@ def main():
     plot_step3_comparison(det, geo, args.out_dir)
     plot_equivalence(geo, det4, args.out_dir)
     plot_adaptive(det, geo, args.out_dir)
+    plot_geo_L2(geo, det, args.out_dir)
 
     print("\nDone.")
 
