@@ -1,7 +1,7 @@
 """
-sweep_dropout.py — dropout-rate sweep for ResNet-20 on CIFAR-10.
+sweep_l2.py — L2 / weight-decay sweep for ResNet-20 on CIFAR-10.
 
-Run:  python scripts/sweep_dropout.py
+Run:  python scripts/regularization_sweeps/sweep_l2.py
 """
 
 import os
@@ -30,10 +30,10 @@ from train import (
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
-DROPOUT_RATES = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
-L2_LAMBDA = 0.0
+L2_LAMBDAS = [0.0, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]
+DROPOUT = 0.0
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "seq_baseline")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "..", "outputs", "seq_experiments")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
@@ -53,61 +53,69 @@ def fmt_float(x: float) -> str:
 # ---------------------------------------------------------------------------
 
 def plot_summary(summary_csv_path: str, save_dir: str) -> None:
-    """Two-subplot figure: test_acc and test_error vs dropout rate (linear x-axis)."""
-    df = pd.read_csv(summary_csv_path, index_col="dropout")
+    """Two-subplot figure: test_acc and test_error vs l2_lambda (log x-axis)."""
+    df = pd.read_csv(summary_csv_path, index_col="l2_lambda")
 
-    dropout_vals = df.index.to_numpy(dtype=float)
+    lambdas = df.index.to_numpy(dtype=float)
+    # Map λ=0 to a small dummy x-value so it sits left of the log axis
+    _ZERO_POS = 1e-6
+    x_plot = np.where(lambdas == 0.0, _ZERO_POS, lambdas)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
     for ax, metric, ylabel, title in [
-        (axes[0], "test_acc",   "Top-1 accuracy", "Test accuracy vs dropout rate"),
-        (axes[1], "test_error", "Top-1 error",    "Test error vs dropout rate"),
+        (axes[0], "test_acc",   "Top-1 accuracy",   "Test accuracy vs L2 lambda"),
+        (axes[1], "test_error", "Top-1 error",       "Test error vs L2 lambda"),
     ]:
         mean = df[f"mean_{metric}"].to_numpy()
         std  = df[f"std_{metric}"].to_numpy()
-        ax.plot(dropout_vals, mean, marker="o", linewidth=1.5)
-        ax.fill_between(dropout_vals, mean - std, mean + std, alpha=0.25)
-        ax.set_xlabel("Dropout rate (p)")
+        ax.semilogx(x_plot, mean, marker="o", linewidth=1.5)
+        ax.fill_between(x_plot, mean - std, mean + std, alpha=0.25)
+        # Replace dummy tick with "0" label
+        ticks = sorted(set(x_plot.tolist()))
+        tick_labels = ["0" if t == _ZERO_POS else fmt_float(t) for t in ticks]
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=8)
+        ax.set_xlabel("L2 lambda (λ)")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, which="both", alpha=0.3)
 
     fig.suptitle(
-        f"Dropout sweep  |  L2={fmt_float(L2_LAMBDA)}  momentum={MOMENTUM}  epochs={EPOCHS}",
+        f"L2 sweep  |  dropout={DROPOUT}  momentum={MOMENTUM}  epochs={EPOCHS}",
         fontsize=10,
     )
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "summary_dropoutsweep.png")
+    out_path = os.path.join(save_dir, "summary_l2sweep.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
 
 
 def plot_weight_norm(traj_csv_path: str, save_dir: str) -> None:
-    """One curve per dropout rate: mean weight-norm over epochs with ±std fill."""
+    """One curve per l2_lambda: mean weight-norm over epochs with ±std fill."""
     df = pd.read_csv(traj_csv_path)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    for dropout, grp in df.groupby("dropout"):
+    for lam, grp in df.groupby("l2_lambda"):
         epochs = grp["epoch"].to_numpy()
         mean   = grp["mean_weight_norm"].to_numpy()
         std    = grp["std_weight_norm"].to_numpy()
-        label  = f"p={fmt_float(dropout)}"
+        label  = f"λ={fmt_float(lam)}"
         ax.plot(epochs, mean, label=label, linewidth=1.5)
         ax.fill_between(epochs, mean - std, mean + std, alpha=0.15)
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Weight L2 norm  ‖w‖")
     ax.set_title(
-        f"Weight norm over training  |  L2={fmt_float(L2_LAMBDA)}  momentum={MOMENTUM}"
+        f"Weight norm over training  |  dropout={DROPOUT}  momentum={MOMENTUM}"
     )
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    out_path = os.path.join(save_dir, "weight_norm_dropoutsweep.png")
+    out_path = os.path.join(save_dir, "weight_norm_l2sweep.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -124,15 +132,15 @@ def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(PLOT_DIR, exist_ok=True)
 
-    # Collect results: {(dropout, seed): DataFrame}
+    # Collect results: {(l2_lambda, seed): DataFrame}
     results: dict[tuple[float, int], pd.DataFrame] = {}
 
-    for dropout in DROPOUT_RATES:
+    for lam in L2_LAMBDAS:
         for seed in SEEDS:
             df = train_one_run(
                 seed=seed,
-                l2_lambda=L2_LAMBDA,
-                dropout=dropout,
+                l2_lambda=lam,
+                dropout=DROPOUT,
                 momentum=MOMENTUM,
                 epochs=EPOCHS,
                 lr=LR,
@@ -140,51 +148,51 @@ def main() -> None:
                 device=device,
                 data_root=DATA_ROOT,
             )
-            results[(dropout, seed)] = df
+            results[(lam, seed)] = df
             final = df.iloc[-1]
             print(
-                f"[dropout={fmt_float(dropout)}, seed={seed}]  "
+                f"[λ={fmt_float(lam)}, seed={seed}]  "
                 f"final test_acc={final['test_acc']:.4f}  "
                 f"test_loss={final['test_loss']:.4f}  "
                 f"‖w‖={final['weight_norm']:.2f}"
             )
 
     # ------------------------------------------------------------------
-    # Build summary CSV (final-epoch stats, one row per dropout rate)
+    # Build summary CSV (final-epoch stats, one row per l2_lambda)
     # ------------------------------------------------------------------
     summary_rows = []
-    for dropout in DROPOUT_RATES:
-        finals = pd.DataFrame([results[(dropout, s)].iloc[-1] for s in SEEDS])
-        row = {"dropout": dropout}
+    for lam in L2_LAMBDAS:
+        finals = pd.DataFrame([results[(lam, s)].iloc[-1] for s in SEEDS])
+        row = {"l2_lambda": lam}
         for col in ("test_loss", "test_acc", "test_error"):
             row[f"mean_{col}"] = finals[col].mean()
             row[f"std_{col}"]  = finals[col].std(ddof=1)
         summary_rows.append(row)
-    summary_df = pd.DataFrame(summary_rows).set_index("dropout")
+    summary_df = pd.DataFrame(summary_rows).set_index("l2_lambda")
 
-    summary_name = f"test_seq_l2_{fmt_float(L2_LAMBDA)}_m_{fmt_float(MOMENTUM)}_dropoutsweep.csv"
+    summary_name = f"test_seq_d_{fmt_float(DROPOUT)}_m_{fmt_float(MOMENTUM)}_l2sweep.csv"
     summary_path = os.path.join(OUT_DIR, summary_name)
     summary_df.to_csv(summary_path)
     print(f"Saved {summary_path}")
 
     # ------------------------------------------------------------------
-    # Build trajectory CSV (mean/std per (dropout, epoch))
+    # Build trajectory CSV (mean/std per (l2_lambda, epoch))
     # ------------------------------------------------------------------
     traj_rows = []
     metric_cols = ["train_loss", "test_loss", "test_acc", "test_error", "weight_norm"]
-    for dropout in DROPOUT_RATES:
+    for lam in L2_LAMBDAS:
         all_dfs = pd.concat(
-            [results[(dropout, s)].assign(seed=s) for s in SEEDS]
+            [results[(lam, s)].assign(seed=s) for s in SEEDS]
         )
         for epoch, grp in all_dfs.groupby("epoch"):
-            row = {"dropout": dropout, "epoch": epoch}
+            row = {"l2_lambda": lam, "epoch": epoch}
             for col in metric_cols:
                 row[f"mean_{col}"] = grp[col].mean()
                 row[f"std_{col}"]  = grp[col].std(ddof=1)
             traj_rows.append(row)
     traj_df = pd.DataFrame(traj_rows)
 
-    traj_name = f"traj_seq_l2_{fmt_float(L2_LAMBDA)}_m_{fmt_float(MOMENTUM)}_dropoutsweep.csv"
+    traj_name = f"traj_seq_d_{fmt_float(DROPOUT)}_m_{fmt_float(MOMENTUM)}_l2sweep.csv"
     traj_path = os.path.join(OUT_DIR, traj_name)
     traj_df.to_csv(traj_path, index=False)
     print(f"Saved {traj_path}")

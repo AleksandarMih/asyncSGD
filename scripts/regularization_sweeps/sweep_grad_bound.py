@@ -1,7 +1,7 @@
 """
 sweep_grad_bound.py — sweep delay τ and overlay the theoretical gradient-norm bound.
 
-Run:  python scripts/sweep_grad_bound.py
+Run:  python scripts/regularization_sweeps/sweep_grad_bound.py
 """
 
 import os
@@ -37,7 +37,7 @@ DROPOUT      = 0.0
 QUEUE        = "FIFO"          # "FIFO" or "GEOMETRIC"
 QTAG         = QUEUE.lower()   # used in all output filenames
 
-OUT_DIR  = os.path.join(_SCRIPTS_DIR, "..", "outputs", "grad_bound")
+OUT_DIR  = os.path.join(_SCRIPTS_DIR, "..", "..", "outputs", "grad_bound")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 

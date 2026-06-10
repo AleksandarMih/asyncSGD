@@ -5,7 +5,7 @@ Phase 1: N-worker sweep at fixed regulariser hyperparameters to test whether
 async parallelism acts as an implicit regulariser. The generalization gap plot
 (gen_gap_workersweep.png) is the primary scientific output.
 
-Run:  python scripts/sweep_workers.py
+Run:  python scripts/regularization_sweeps/sweep_workers.py
 """
 
 import os
@@ -39,7 +39,7 @@ WEIGHT_DECAY = 1e-4
 
 NUM_WORKERS_LIST = [1, 2, 4, 8]
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "async_experiments")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "..", "outputs", "async_experiments")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 

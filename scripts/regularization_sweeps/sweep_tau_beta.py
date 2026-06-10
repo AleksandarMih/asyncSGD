@@ -1,7 +1,7 @@
 """
 sweep_tau_beta.py — delayed-gradient SGD sweep over (τ, β) for ResNet-20 on CIFAR-10.
 
-Run:  python scripts/sweep_tau_beta.py
+Run:  python scripts/regularization_sweeps/sweep_tau_beta.py
 """
 
 import os
@@ -37,7 +37,7 @@ QTAG         = QUEUE.lower()   # used in all output filenames
 TAUS = [0, 1, 2, 4, 6, 8, 10]
 MOMENTUMS = [0.0]
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "delayed_experiments")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "..", "outputs", "delayed_experiments")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
