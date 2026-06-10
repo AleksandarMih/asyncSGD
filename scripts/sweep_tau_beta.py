@@ -16,16 +16,17 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_SCRIPTS_DIR, ".."))
 sys.path.insert(0, _SCRIPTS_DIR)
 
-from delayed_training import (
+from train import (
     BATCH_SIZE,
     DATA_ROOT,
     DROPOUT,
     EPOCHS,
     LR,
     SEEDS,
-    WEIGHT_DECAY,
     train_one_run_delayed,
 )
+
+WEIGHT_DECAY = 0.0
 
 # ---------------------------------------------------------------------------
 # Sweep hyperparameters — edit here

@@ -20,7 +20,7 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_SCRIPTS_DIR, ".."))
 sys.path.insert(0, _SCRIPTS_DIR)
 
-from async_training import (
+from train import (
     BATCH_SIZE,
     DATA_ROOT,
     DROPOUT,
@@ -28,9 +28,10 @@ from async_training import (
     LR,
     MOMENTUM,
     SEEDS,
-    WEIGHT_DECAY,
     train_one_run_async,
 )
+
+WEIGHT_DECAY = 1e-4
 
 # ---------------------------------------------------------------------------
 # Sweep hyperparameters — edit here
