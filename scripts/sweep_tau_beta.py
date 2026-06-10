@@ -31,10 +31,10 @@ from delayed_training import (
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
-TAUS = [0, 1, 2, 4, 8, 16, 32]
-MOMENTUMS = [0.0, 0.9]
+TAUS = [0, 1, 2, 4, 6, 8, 10]
+MOMENTUMS = [0.0]
 
-OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "delayed_experiments")
+OUT_DIR = os.path.join(_SCRIPTS_DIR, "..", "outputs", "delayed_experiments_focused")
 PLOT_DIR = os.path.join(OUT_DIR, "plots")
 
 
@@ -136,7 +136,7 @@ def main() -> None:
     for beta in MOMENTUMS:
         for tau in TAUS:
             for seed in SEEDS:
-                df = train_one_run_delayed(
+                df, _, _ = train_one_run_delayed(
                     seed=seed,
                     tau=tau,
                     momentum=beta,
