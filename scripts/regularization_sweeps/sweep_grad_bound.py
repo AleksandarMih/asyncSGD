@@ -34,7 +34,7 @@ TAUS         = [0, 1, 2, 4, 8, 10]
 MOMENTUM     = 0.0
 WEIGHT_DECAY = 0.0
 DROPOUT      = 0.0
-QUEUE        = "FIFO"          # "FIFO" or "GEOMETRIC"
+QUEUE        = "GEOMETRIC"          # "FIFO" or "GEOMETRIC"
 QTAG         = QUEUE.lower()   # used in all output filenames
 
 OUT_DIR  = os.path.join(_SCRIPTS_DIR, "..", "..", "outputs", "grad_bound")

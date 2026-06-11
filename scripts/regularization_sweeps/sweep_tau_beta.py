@@ -27,7 +27,7 @@ from train import (
 )
 
 WEIGHT_DECAY = 0.0
-QUEUE        = "FIFO"          # "FIFO" or "GEOMETRIC"
+QUEUE        = "GEOMETRIC"          # "FIFO" or "GEOMETRIC"
 QTAG         = QUEUE.lower()   # used in all output filenames
 
 # ---------------------------------------------------------------------------
