@@ -9,7 +9,7 @@
 
 \begin{document}
 
-\title{Asynchronous SGD: Delay, Momentum, and Generalization}
+\title{Delayed SGD: Convergence, Momentum, and Regularization}
 
 \author{
   Alex Potocnik \quad Aleksandar Mihaylov \quad Ilia Badanin \\
@@ -18,103 +18,45 @@
 
 \maketitle
 
-\begin{abstract}
-Gradient staleness from asynchronous training degrades convergence and
-interacts non-trivially with momentum.
-All experiments in this work \emph{simulate} asynchronous SGD in a single
-sequential process by injecting stale gradients from a buffer; no real
-multi-process or distributed training is performed.
-We investigate three questions: (1)~how does delay affect convergence speed
-and final accuracy; (2)~how does momentum interact with delay, does the
-delay distribution type matter, and can theory-guided scheduling recover
-lost performance; and (3)~whether gradient staleness acts as a regularizer
-analogous to dropout.
-For question~1, we show that delay degrades accuracy monotonically under zero-momentum
-training ($-29.5$\,pp from $\tau{=}0$ to $\tau{=}20$), with convergence harm
-concentrated at LR-decay transitions where stale gradients cannot exploit
-the reduced step size; the normalised area under the learning curve falls to
-only 0.51 at $\tau{=}20$.
-For question~2, we show that $\beta{=}0.9$ collapses catastrophically under
-deterministic delay (dropping from 90.3\% to below 11\% at $\tau{=}20$),
-consistent with Liu et al.~\cite{liu2018momentum}.
-Crucially, switching to \emph{geometric} delay (matching the M/M/1 model
-of Mitliagkas et al.~\cite{mitliagkas2014async}) reverses this asymmetry:
-$\beta{=}0$ becomes far more resilient (82\% vs.\ 52\% at $\mathrm{E}[\tau]{=}20$),
-while high momentum collapses even faster due to rare extreme-lag events.
-An adaptive schedule tracking the Liu bound recovers up to $+5.9$\,pp
-over fixed-$\beta$ baselines.
-% [Q3 TEAMMATE Aleksandar: one sentence summarising regularization findings]
-\end{abstract}
-
 % =========================================================================
 \section{Introduction}
 % =========================================================================
 
-Stochastic gradient descent is the workhorse of deep learning, but
-wall-clock training time on a single processor is a bottleneck at scale.
-Asynchronous SGD~\cite{recht2011hogwild} sidesteps synchronization overhead
-by allowing workers to apply gradients without waiting for each other,
-producing \emph{stale} gradients: a gradient computed on $\theta_t$ is
-applied at time $t{+}\tau$ when the model has already advanced to
-$\theta_{t+\tau}$.
-The practical impact of this staleness on accuracy and convergence depends
-critically on both the magnitude and the \emph{distribution} of the delay.
-Studying this empirically in a real distributed system introduces
-confounders (hardware variance, network jitter, synchronization overhead)
-that make it difficult to isolate the effect of staleness itself.
-We therefore adopt a \emph{controlled simulation} approach: a single
-sequential process injects gradients from a buffer, precisely controlling
-the staleness at each step.
-This allows clean isolation of delay effects but does not capture
-system-level phenomena such as worker heterogeneity or communication overlap.
+Recht et al.~\cite{recht2011hogwild} introduced Hogwild!, a lock-free asynchronous SGD
+algorithm in which multiple workers read and write shared model parameters without
+synchronization. Despite the resulting gradient staleness, they showed that under
+sparsity assumptions, convergence is preserved with nearly the same sample efficiency
+as sequential SGD. This result established asynchronous SGD as a practical approach to
+speeding up training with minimal accuracy loss.
 
-Three concrete questions motivate this project.
-First, does delay degrade accuracy monotonically, and does it slow
-convergence uniformly across training phases?
-Second, how does explicit momentum interact with staleness, does the
-distribution of delays (deterministic vs.\ stochastic) change this
-interaction, and can theoretical guarantees guide adaptive schedule design?
-Third, can gradient noise from staleness act as a regularizer analogous
-to dropout, improving generalization?
+Running true asynchronous training on CPU is impractical at scale, so we simulate it
+sequentially by injecting controlled gradient staleness via a buffer. We use two delay
+models. The first is a deterministic FIFO queue with fixed delay $\tau$, which serves
+as a controlled baseline isolating delay magnitude. The second samples a fresh delay at
+each step from a geometric distribution, $\tau_t \sim \mathrm{Geom}(1/M) - 1$, following
+Mitliagkas et al.~\cite{mitliagkas2014async}. The geometric model matches the service-time
+distribution of $M$ parallel workers in an M/M/1 queue and is therefore a principled proxy
+for real distributed systems. Mitliagkas et al.\ further showed that such asynchronous
+updates introduce an \emph{implicit momentum} term, connecting gradient staleness to
+explicit momentum methods. Using these two simulations, we study how delay magnitude,
+delay distribution, and momentum jointly affect convergence, and we evaluate the
+safe-momentum bound of Liu et al.~\cite{liu2018momentum} as a practical guide for
+setting momentum under delay.
 
-Our contributions for question~1 are:
+All experiments train ResNet-20~\cite{he2016resnet} on CIFAR-10~\cite{krizhevsky2009cifar}.
+Our goal is empirical: rather than deriving convergence bounds, we ask how the phenomena
+identified in the asynchronous SGD literature --- staleness, implicit momentum, and
+learning rate sensitivity --- manifest in a standard deep learning setting.
+
+\paragraph{Contributions.}
 \begin{itemize}
-  \item Learning curves across $\tau \in \{0,2,5,10,20\}$ showing that delay
-        shifts convergence trajectories downward and rightward, with
-        disproportionate harm at LR-decay milestones: at $\tau{=}20$ the
-        model effectively stalls after epoch~30 because stale gradients
-        cannot track the post-decay landscape.
-  \item A convergence-speed analysis showing that the 80\% accuracy threshold
-        is reached at epoch~26 for $\tau{=}0$ but is never reached at
-        $\tau{=}20$; the 85\% threshold is unattainable beyond $\tau{=}5$.
-  \item Evidence that delay does not reduce the train-test gap, ruling out
-        an implicit-regularisation interpretation: staleness uniformly
-        degrades optimisation without changing the overfitting regime.
-\end{itemize}
-
-% [Q3 TEAMMATE Aleksandar: expand on question 3 and your contributions here]
-
-Our contributions for question~2 are:
-\begin{itemize}
-  \item A $\tau \times \beta$ grid (45 runs) showing that $\beta{=}0.9$
-        is catastrophically unstable at any nonzero \emph{deterministic}
-        delay, consistent with the Liu et al.\ bound
-        $\tau \lesssim (1-\mu)^2/\eta$.
-  \item A matched geometric-delay sweep ($\tau_t \sim \mathrm{Geom}(1/M)$,
-        45 runs) revealing that the delay distribution type fundamentally
-        changes the momentum-delay interaction: at the same average staleness,
-        stochastic delay is safer for $\beta{=}0$ but more dangerous for
-        $\beta{=}0.9$.
-  \item A negative result for the Mitliagkas equivalence
-        conjecture~\cite{mitliagkas2014async} even under geometric delay,
-        confirming it does not hold empirically on ResNet-20/CIFAR-10.
-  \item Negative explicit momentum ($\beta \in [-0.9, 0]$) as a
-        theoretically grounded compensation, yielding a $+13.3$\,pp gain
-        at $\tau{=}20$.
-  \item An adaptive momentum schedule tracking
-        $\mu_\mathrm{safe}(\eta_t) = 1 - \sqrt{\tau \eta_t}$ as the LR
-        decays, consistently outperforming all fixed-$\beta$ baselines under
-        both delay regimes.
+  \item We analyze the convergence of delayed SGD in a realistic deep learning context,
+        across a systematic grid of delay magnitudes and distributions.
+  \item We analyze the implicit momentum introduced by gradient staleness and propose an
+        adaptive momentum schedule grounded in the theoretical bound of
+        Liu et al.~\cite{liu2018momentum} to counteract it.
+  \item We investigate whether gradient staleness acts as a regularizer, drawing
+        comparisons with established techniques such as weight decay and dropout.
 \end{itemize}
 
 % =========================================================================
@@ -439,7 +381,22 @@ However, gains are smaller than under deterministic delay, and variance
 across seeds is higher, consistent with the increased gradient noise
 from stochastic staleness.
 
-% [Q3 TEAMMATE Aleksandar: your regularization results subsection here]
+% =========================================================================
+\subsection{Staleness as a Regularizer}
+\label{sec:regularization}
+% =========================================================================
+
+\subsubsection{Regularization Baselines in Sequential Training}
+
+
+
+\subsubsection{Delay Baseline Sweep}
+
+
+
+\subsubsection{Trajectory Analysis of Weight and Gradient Norms}
+
+
 
 % =========================================================================
 \subsection{LR Correction Rescues Convergence at High Staleness}

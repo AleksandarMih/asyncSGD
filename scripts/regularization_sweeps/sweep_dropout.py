@@ -27,6 +27,32 @@ from train import (
 )
 
 # ---------------------------------------------------------------------------
+# Style — matches make_figures.py
+# ---------------------------------------------------------------------------
+plt.rcParams.update({
+    "font.family": "DejaVu Serif",
+    "font.size": 8,
+    "axes.titlesize": 8,
+    "axes.labelsize": 8,
+    "xtick.labelsize": 7,
+    "ytick.labelsize": 7,
+    "legend.fontsize": 7,
+    "lines.linewidth": 1.2,
+    "axes.linewidth": 0.7,
+    "xtick.major.width": 0.7,
+    "ytick.major.width": 0.7,
+    "xtick.minor.width": 0.5,
+    "ytick.minor.width": 0.5,
+    "figure.dpi": 300,
+    "savefig.dpi": 300,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
+
+COL1 = 3.5   # single-column width (inches)
+COL2 = 7.0   # double-column width (inches)
+
+# ---------------------------------------------------------------------------
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
@@ -58,7 +84,7 @@ def plot_summary(summary_csv_path: str, save_dir: str) -> None:
 
     dropout_vals = df.index.to_numpy(dtype=float)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 2.5))
 
     for ax, metric, ylabel, title in [
         (axes[0], "test_acc",   "Top-1 accuracy", "Test accuracy vs dropout rate"),
@@ -66,21 +92,21 @@ def plot_summary(summary_csv_path: str, save_dir: str) -> None:
     ]:
         mean = df[f"mean_{metric}"].to_numpy()
         std  = df[f"std_{metric}"].to_numpy()
-        ax.plot(dropout_vals, mean, marker="o", linewidth=1.5)
+        ax.plot(dropout_vals, mean, marker="o", linewidth=1.2)
         ax.fill_between(dropout_vals, mean - std, mean + std, alpha=0.25)
         ax.set_xlabel("Dropout rate (p)")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, linewidth=0.4, alpha=0.5)
 
     fig.suptitle(
         f"Dropout sweep  |  L2={fmt_float(L2_LAMBDA)}  momentum={MOMENTUM}  epochs={EPOCHS}",
-        fontsize=10,
+        fontsize=8,
     )
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, f"summary_dropoutsweep_m_{fmt_float(MOMENTUM)}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
@@ -89,13 +115,13 @@ def plot_weight_norm(traj_csv_path: str, save_dir: str) -> None:
     """One curve per dropout rate: mean weight-norm over epochs with ±std fill."""
     df = pd.read_csv(traj_csv_path)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     for dropout, grp in df.groupby("dropout"):
         epochs = grp["epoch"].to_numpy()
         mean   = grp["mean_weight_norm"].to_numpy()
         std    = grp["std_weight_norm"].to_numpy()
         label  = f"p={fmt_float(dropout)}"
-        ax.plot(epochs, mean, label=label, linewidth=1.5)
+        ax.plot(epochs, mean, label=label, linewidth=1.2)
         ax.fill_between(epochs, mean - std, mean + std, alpha=0.15)
 
     ax.set_xlabel("Epoch")
@@ -103,12 +129,12 @@ def plot_weight_norm(traj_csv_path: str, save_dir: str) -> None:
     ax.set_title(
         f"Weight norm over training  |  L2={fmt_float(L2_LAMBDA)}  momentum={MOMENTUM}"
     )
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.grid(True, linewidth=0.4, alpha=0.5)
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, f"weight_norm_dropoutsweep_m_{fmt_float(MOMENTUM)}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
