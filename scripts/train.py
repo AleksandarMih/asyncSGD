@@ -87,6 +87,14 @@ class SGDMomentum(torch.optim.Optimizer):
         super().__init__(params, defaults)
 
     def step(self, closure=None):
+        """Perform one SGD+momentum update over all parameter groups.
+
+        Args:
+            closure: optional callable that re-evaluates the model and returns the loss.
+
+        Returns:
+            loss returned by closure if provided, else None.
+        """
         for group in self.param_groups:
             lr       = group["lr"]
             beta     = group["momentum"]
@@ -110,6 +118,11 @@ class SGDMomentum(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the delayed-gradient training script.
+
+    Returns:
+        argparse.Namespace with all hyperparameter and experiment configuration fields.
+    """
     p = argparse.ArgumentParser(
         description="Step 4 delayed-gradient experiments",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -158,23 +171,57 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def implicit_momentum(tau: int) -> float:
-    """Mitliagkas approximation: delay τ induces implicit momentum (τ-1)/τ."""
+    """Compute the implicit momentum induced by gradient delay (Mitliagkas 2014).
+
+    Args:
+        tau: gradient delay in steps.
+
+    Returns:
+        Implicit momentum value (τ−1)/τ, or 0.0 when tau=0.
+    """
     return (tau - 1) / tau if tau > 0 else 0.0
 
 
 def compensated_momentum(tau: int, beta_target: float) -> float:
-    """β_explicit = max(0, β_target − β_implicit) so total ≈ β_target."""
+    """Compute the explicit momentum that compensates for implicit delay momentum.
+
+    Args:
+        tau: gradient delay in steps.
+        beta_target: desired effective total momentum.
+
+    Returns:
+        max(0, beta_target − implicit_momentum(tau)), rounded to 6 decimal places.
+    """
     return max(0.0, round(beta_target - implicit_momentum(tau), 6))
 
 
 def liu_bound_beta(tau: int, lr: float) -> float:
-    """µ_safe ceiling from Liu et al. NeurIPS 2018: τ ≲ (1−µ)²/η → µ = 1−√(τ·η)."""
+    """Compute the safe momentum ceiling from Liu et al. NeurIPS 2018.
+
+    Args:
+        tau: gradient delay in steps.
+        lr: current learning rate η.
+
+    Returns:
+        µ_safe = 1 − √(τ·η), the largest µ satisfying τ ≲ (1−µ)²/η.
+    """
     return 1.0 - math.sqrt(max(tau * lr, 0.0))
 
 
 def compute_scheduled_beta(tau: int, current_lr: float, schedule: str,
                            initial_lr: float, bound_offset: float = 0.3) -> float:
-    """Return the momentum to apply this epoch according to the named schedule."""
+    """Return the momentum to apply this epoch according to the named schedule.
+
+    Args:
+        tau: gradient delay in steps.
+        current_lr: learning rate in use this epoch.
+        schedule: one of 'at_bound', 'below_bound', 'above_bound', 'neg_ramp'.
+        initial_lr: base learning rate before any decay (used by 'neg_ramp').
+        bound_offset: additive offset above the Liu bound for 'above_bound'.
+
+    Returns:
+        Momentum scalar for this epoch.
+    """
     liu = liu_bound_beta(tau, current_lr)
     if schedule == "at_bound":
         return liu
@@ -190,6 +237,16 @@ def compute_scheduled_beta(tau: int, current_lr: float, schedule: str,
 
 
 def get_loaders(data_root: str, batch_size: int, num_workers: int = 2):
+    """Build CIFAR-10 train and test DataLoaders.
+
+    Args:
+        data_root: path to the CIFAR-10 data directory (downloaded if absent).
+        batch_size: mini-batch size for the training loader (test loader uses 256).
+        num_workers: DataLoader worker processes.
+
+    Returns:
+        (train_loader, test_loader) tuple of torch DataLoader objects.
+    """
     train_ds = torchvision.datasets.CIFAR10(
         root=data_root, train=True,  download=True, transform=_train_transform)
     test_ds  = torchvision.datasets.CIFAR10(
@@ -204,6 +261,16 @@ def get_loaders(data_root: str, batch_size: int, num_workers: int = 2):
 
 
 def make_csv_path(out_dir: str, args: argparse.Namespace) -> str:
+    """Construct the output CSV file path from the experiment configuration.
+
+    Args:
+        out_dir: directory where the CSV will be written.
+        args: parsed argument namespace; uses experiment, delay_type, tau, M,
+              momentum, lr_scale, schedule, bound_offset, and seed.
+
+    Returns:
+        Path string for the CSV output file.
+    """
     if args.delay_type == "geometric":
         if args.experiment == "G":
             name = (f"expG_geo_M{args.M}_schedule{args.schedule}_seed{args.seed}.csv")
@@ -248,9 +315,21 @@ def train_one_epoch(
       stores the last min(5M, step) snapshots, indexed oldest→newest (left→right).
       The sampled delay indexes into this history.
 
-    Returns (avg_train_loss, train_accuracy_pct, avg_grad_angle).
-    avg_grad_angle is the mean cosine similarity between the fresh gradient
-    and the stale gradient being applied; nan when no staleness.
+    Args:
+        model: the neural network being trained.
+        loader: training DataLoader.
+        optimizer: SGD optimizer whose parameter gradients will be replaced with stale ones.
+        grad_buffer: persistent deque of gradient snapshots shared across epochs.
+        tau: FIFO delay depth in steps (ignored for geometric mode).
+        device: torch device for data and model.
+        delay_type: 'fifo' for deterministic lag; 'geometric' for random per-step delay.
+        M: number of simulated workers; E[τ_t] = M−1 (geometric mode only).
+        rng: numpy Generator for geometric delay sampling.
+
+    Returns:
+        (avg_train_loss, train_accuracy_pct, avg_grad_angle) — avg_grad_angle is
+        the mean cosine similarity between the fresh and applied stale gradient;
+        nan when no stale gradients were applied.
     """
     model.train()
     total_loss = correct = total = 0
@@ -319,6 +398,16 @@ def train_one_epoch(
 
 
 def evaluate(model: torch.nn.Module, loader, device: torch.device) -> float:
+    """Evaluate top-1 classification accuracy on a DataLoader.
+
+    Args:
+        model: network to evaluate (set to eval mode internally).
+        loader: DataLoader over the evaluation set.
+        device: torch device for data and model.
+
+    Returns:
+        Top-1 accuracy as a percentage in [0, 100].
+    """
     model.eval()
     correct = total = 0
     with torch.no_grad():
@@ -339,7 +428,18 @@ def evaluate_full(
     device: torch.device,
     criterion: torch.nn.Module,
 ) -> tuple[float, float, float]:
-    """Return (test_loss, test_acc ∈[0,1], test_error ∈[0,1]) over loader."""
+    """Evaluate loss and accuracy over a DataLoader.
+
+    Args:
+        model: network to evaluate (set to eval mode internally).
+        loader: DataLoader over the evaluation set.
+        device: torch device for data and model.
+        criterion: loss function module (e.g. CrossEntropyLoss).
+
+    Returns:
+        (test_loss, test_acc, test_error) where test_acc and test_error are in
+        [0, 1] and test_error = 1 − test_acc.
+    """
     model.eval()
     total_loss = correct = n = 0
     with torch.no_grad():
@@ -369,7 +469,24 @@ def train_one_run(
     data_root: str,
     num_workers: int = 2,
 ) -> pd.DataFrame:
-    """Train a single ResNet-20 run and return per-epoch metrics as a DataFrame."""
+    """Train a single ResNet-20 run with standard SGD and return per-epoch metrics.
+
+    Args:
+        seed: random seed for reproducibility.
+        l2_lambda: L2 weight-decay coefficient.
+        dropout: dropout probability applied inside ResNet-20.
+        momentum: SGD momentum β.
+        epochs: number of training epochs.
+        lr: learning rate.
+        batch_size: mini-batch size.
+        device: torch device for training.
+        data_root: path to the CIFAR-10 data directory.
+        num_workers: DataLoader worker processes.
+
+    Returns:
+        DataFrame with columns epoch, train_loss, test_loss, test_acc,
+        test_error, weight_norm — one row per epoch.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -443,6 +560,22 @@ def train_one_run_delayed(
     delay_type='fifo'      — deterministic FIFO queue; lag = τ batches.
     delay_type='geometric' — τ_t ~ Geom(1/M)−1 per step; sliding window of 5M.
                              Set M = τ + 1 so E[τ_t] = τ matches the FIFO nominal.
+
+    Args:
+        seed: random seed for reproducibility.
+        tau: FIFO delay depth in batches; ignored when delay_type='geometric'.
+        momentum: SGD momentum β.
+        weight_decay: L2 regularisation coefficient.
+        dropout: dropout probability applied inside ResNet-20.
+        epochs: number of training epochs.
+        lr: learning rate.
+        batch_size: mini-batch size.
+        device: torch device for training.
+        data_root: path to the CIFAR-10 data directory.
+        num_workers: DataLoader worker processes.
+        delay_type: 'fifo' or 'geometric'.
+        M: number of simulated workers for geometric delay; E[τ_t] = M−1.
+        rng: optional numpy Generator; created from seed if None.
 
     Returns:
         df_epoch: per-epoch DataFrame with columns epoch, train_loss, test_loss,
@@ -547,7 +680,16 @@ def train_one_run_delayed(
 # ---------------------------------------------------------------------------
 
 def _get_train_subset(rank: int, num_workers: int, data_root: str) -> torch.utils.data.Subset:
-    """Contiguous shard of CIFAR-10 training set for worker `rank`."""
+    """Return a contiguous shard of the CIFAR-10 training set for one Hogwild! worker.
+
+    Args:
+        rank: worker index (0-based).
+        num_workers: total number of workers; determines shard size.
+        data_root: path to the CIFAR-10 data directory.
+
+    Returns:
+        torch.utils.data.Subset covering this worker's portion of the training set.
+    """
     dataset = torchvision.datasets.CIFAR10(
         root=data_root, train=True, download=False, transform=_train_transform,
     )
@@ -559,7 +701,14 @@ def _get_train_subset(rank: int, num_workers: int, data_root: str) -> torch.util
 
 
 def _get_bn_train_loader(data_root: str) -> torch.utils.data.DataLoader:
-    """Full training set loader for update_bn (shuffle=False, num_workers=0)."""
+    """Return a DataLoader over the full CIFAR-10 training set for BatchNorm re-estimation.
+
+    Args:
+        data_root: path to the CIFAR-10 data directory.
+
+    Returns:
+        DataLoader with batch_size=256, shuffle=False, num_workers=0.
+    """
     dataset = torchvision.datasets.CIFAR10(
         root=data_root, train=True, download=False, transform=_train_transform,
     )
@@ -583,7 +732,29 @@ def _worker(
     counter,
     lock,
 ) -> None:
-    """One Hogwild! worker: trains one local epoch over its data shard."""
+    """One Hogwild! worker: trains one local epoch over its data shard.
+
+    Writes directly to the shared-memory model without locks (Hogwild! semantics).
+    Results are accumulated into the shared epoch_losses / epoch_counts arrays.
+
+    Args:
+        rank: worker index used for data sharding and seeding.
+        model: shared-memory ResNet-20; parameters are updated in-place.
+        batch_size: mini-batch size.
+        num_workers: total worker count (for sharding).
+        momentum: SGD momentum β.
+        weight_decay: L2 regularisation coefficient.
+        lr: learning rate.
+        data_root: path to the CIFAR-10 data directory.
+        seed: base random seed; worker uses seed + rank.
+        epoch_losses: shared array; element [rank] receives this worker's total loss.
+        epoch_counts: shared array; element [rank] receives this worker's sample count.
+        counter: shared step counter incremented after each batch.
+        lock: multiprocessing lock protecting counter updates.
+
+    Returns:
+        None (results written to shared arrays).
+    """
     torch.set_num_threads(1)
     torch.manual_seed(seed + rank)
 
@@ -627,9 +798,29 @@ def train_one_run_async(
 ) -> pd.DataFrame:
     """Train a single Hogwild! run and return per-epoch metrics as a DataFrame.
 
+    Spawns num_workers parallel processes each epoch; they write concurrently to
+    a shared-memory model without locks (Hogwild! semantics). BatchNorm statistics
+    are re-estimated after each epoch via update_bn.
+
     Note: runs are *not* bitwise reproducible despite seeding — Hogwild!
     concurrent writes to shared memory introduce non-determinism.
     `device` is accepted for API parity; Hogwild! always runs on CPU.
+
+    Args:
+        seed: random seed for model initialisation and worker seeding.
+        num_workers: number of parallel Hogwild! worker processes.
+        momentum: SGD momentum β.
+        weight_decay: L2 regularisation coefficient.
+        dropout: dropout probability applied inside ResNet-20.
+        epochs: number of training epochs.
+        lr: learning rate.
+        batch_size: mini-batch size per worker.
+        device: accepted for API parity; training always runs on CPU.
+        data_root: path to the CIFAR-10 data directory.
+
+    Returns:
+        DataFrame with columns epoch, train_loss, test_loss, test_acc,
+        test_error, weight_norm — one row per epoch.
     """
     try:
         mp.set_start_method("spawn", force=True)
@@ -704,6 +895,12 @@ def train_one_run_async(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """Run a single delayed-gradient training experiment from CLI arguments.
+
+    Resolves effective momentum (compensated or fixed), initialises the model,
+    optimizer, LR scheduler, and gradient buffer, then trains for --epochs epochs,
+    writing per-epoch metrics to a CSV file under --out-dir.
+    """
     args = parse_args()
 
     # For geometric delay, τ_eff = E[τ] = M−1, used by compensation / schedule helpers.
