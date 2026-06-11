@@ -23,6 +23,29 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+COL1, COL2 = 3.5, 7.0  # single / double column width (inches)
+plt.rcParams.update({
+    "font.family":      "DejaVu Serif",
+    "font.size":        8,
+    "axes.titlesize":   8,
+    "axes.labelsize":   8,
+    "xtick.labelsize":  7,
+    "ytick.labelsize":  7,
+    "legend.fontsize":  7,
+    "lines.linewidth":  1.2,
+    "axes.linewidth":   0.7,
+    "figure.dpi":       300,
+    "savefig.dpi":      300,
+    "pdf.fonttype":     42,
+    "ps.fonttype":      42,
+})
+
+
+def _save(fig, path: str) -> None:
+    fig.savefig(path, bbox_inches="tight")
+    print(f"Saved: {path}")
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -96,7 +119,7 @@ def plot_step3_comparison(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
         print("[skip] plot_geo_step3_comparison: no data")
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(COL2 * 2, 2.8), sharey=True)
     fig.suptitle("Deterministic vs Geometric Delay: Final Test Accuracy",
                  fontsize=13, fontweight="bold")
 
@@ -138,9 +161,8 @@ def plot_step3_comparison(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
 
     plt.tight_layout()
     out = os.path.join(out_dir, "plot_geo_step3_comparison.png")
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Saved: {out}")
+    _save(fig, out)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +186,7 @@ def plot_equivalence(geo: pd.DataFrame, det4: pd.DataFrame, out_dir: str):
         det_a = det4[(det4["delay_type"] == "fifo") & (det4["tau"] == 0)]
 
     pairs = [(3, (3-1)/3), (6, (6-1)/6)]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=False)
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 2.8), sharey=False)
     fig.suptitle("Mitliagkas Equivalence Test: Geometric Delay vs Implicit Momentum",
                  fontsize=12, fontweight="bold")
 
@@ -201,9 +223,8 @@ def plot_equivalence(geo: pd.DataFrame, det4: pd.DataFrame, out_dir: str):
 
     plt.tight_layout()
     out = os.path.join(out_dir, "plot_geo_equivalence.png")
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Saved: {out}")
+    _save(fig, out)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +244,7 @@ def plot_adaptive(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
         print("[skip] plot_geo_adaptive: no schedule column found")
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(COL2 * 2, 2.8), sharey=True)
     fig.suptitle("Adaptive Liu-Bound Schedule: Deterministic vs Geometric Delay",
                  fontsize=12, fontweight="bold")
 
@@ -287,9 +308,8 @@ def plot_adaptive(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
 
     plt.tight_layout()
     out = os.path.join(out_dir, "plot_geo_adaptive.png")
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Saved: {out}")
+    _save(fig, out)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +352,7 @@ def plot_geo_L2(geo: pd.DataFrame, det: pd.DataFrame, out_dir: str) -> None:
     width   = 0.13
     offsets = np.linspace(-(n_bars - 1) / 2, (n_bars - 1) / 2, n_bars) * width
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.0))
 
     for i, (label, color) in enumerate(zip(bar_labels, bar_colors)):
         means, stds = [], []
@@ -379,9 +399,8 @@ def plot_geo_L2(geo: pd.DataFrame, det: pd.DataFrame, out_dir: str) -> None:
     fig.tight_layout()
 
     out = os.path.join(out_dir, "plot_geo_L2_adaptive_summary.png")
-    fig.savefig(out, dpi=150)
+    _save(fig, out)
     plt.close(fig)
-    print(f"Saved: {out}")
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +428,7 @@ def plot_Q1_curves_geo(geo: pd.DataFrame, out_dir: str) -> None:
         .reset_index()
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 2.8), sharey=True)
     for ax, beta in zip(axes, BETAS_PLOT):
         sub = curves[curves["momentum"].round(2) == beta]
         for M in Ms:
@@ -437,9 +456,8 @@ def plot_Q1_curves_geo(geo: pd.DataFrame, out_dir: str) -> None:
                  fontsize=11, y=1.01)
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_geo_convergence_curves.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +507,7 @@ def plot_Q1_convergence_metrics_geo(geo: pd.DataFrame, out_dir: str) -> None:
     xlabels = [f"E[τ]={M-1}" for M in Ms]
     colors_thr = ["#4393c3", "#2166ac"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(COL2, 2.8))
 
     for i, thr in enumerate(THRESHOLDS):
         vals    = []
@@ -533,9 +551,8 @@ def plot_Q1_convergence_metrics_geo(geo: pd.DataFrame, out_dir: str) -> None:
 
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_geo_convergence_metrics.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +577,7 @@ def plot_geo_stability_boundary(geo_all: pd.DataFrame, out_dir: str) -> None:
     agg = final_test_acc(grid, ["M", "momentum"])
     agg["etau"] = agg["M"] - 1
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.0))
 
     for beta in BETAS_PLOT:
         sub = agg[agg["momentum"].round(2) == beta].sort_values("etau")
@@ -595,9 +612,8 @@ def plot_geo_stability_boundary(geo_all: pd.DataFrame, out_dir: str) -> None:
     fig.tight_layout()
 
     path = os.path.join(out_dir, "plot_geo_stability_boundary.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +637,7 @@ def plot_Q1_gap_geo(geo: pd.DataFrame, out_dir: str) -> None:
     cmap   = plt.cm.Blues
     colors = {M: cmap(0.35 + 0.65 * i / (len(Ms) - 1)) for i, M in enumerate(Ms)}
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(COL2, 2.8))
     for M in Ms:
         grp = curves[curves["M"] == M].sort_values("epoch")
         ax.plot(grp["epoch"], grp["gap"], color=colors[M], linewidth=1.8,
@@ -636,9 +652,8 @@ def plot_Q1_gap_geo(geo: pd.DataFrame, out_dir: str) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_geo_train_test_gap.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------

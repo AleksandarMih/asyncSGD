@@ -20,6 +20,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+COL1, COL2 = 3.5, 7.0  # single / double column width (inches)
+plt.rcParams.update({
+    "font.family":      "DejaVu Serif",
+    "font.size":        8,
+    "axes.titlesize":   8,
+    "axes.labelsize":   8,
+    "xtick.labelsize":  7,
+    "ytick.labelsize":  7,
+    "legend.fontsize":  7,
+    "lines.linewidth":  1.2,
+    "axes.linewidth":   0.7,
+    "figure.dpi":       300,
+    "savefig.dpi":      300,
+    "pdf.fonttype":     42,
+    "ps.fonttype":      42,
+})
+
+
+def _save(fig, path: str) -> None:
+    fig.savefig(path, bbox_inches="tight")
+    print(f"Saved: {path}")
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -55,18 +77,14 @@ def compute_final_stats(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def plot_A(stats: pd.DataFrame, out_dir: str) -> None:
-    fig, ax = plt.subplots(figsize=(7, 4))
-
+    fig, ax = plt.subplots(figsize=(COL2, 2.8))
     for beta, grp in stats.groupby("momentum"):
         grp = grp.sort_values("tau")
         ax.plot(grp["tau"], grp["mean"], marker="o", label=f"β={beta}")
-        ax.fill_between(
-            grp["tau"],
-            grp["mean"] - grp["std"],
-            grp["mean"] + grp["std"],
-            alpha=0.2,
-        )
-
+        ax.fill_between(grp["tau"],
+                        grp["mean"] - grp["std"],
+                        grp["mean"] + grp["std"],
+                        alpha=0.2)
     ax.set_xlabel("Gradient delay τ")
     ax.set_ylabel("Test accuracy (%)")
     ax.set_title("Final test accuracy vs delay, by momentum")
@@ -74,9 +92,8 @@ def plot_A(stats: pd.DataFrame, out_dir: str) -> None:
     ax.legend()
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_A_acc_vs_tau.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +112,7 @@ def plot_B(df: pd.DataFrame, out_dir: str, tau: int = 10) -> None:
         .reset_index()
     )
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(COL2, 2.8))
     for beta, grp in curves.groupby("momentum"):
         grp = grp.sort_values("epoch")
         ax.plot(grp["epoch"], grp["mean"], label=f"β={beta}")
@@ -112,9 +129,8 @@ def plot_B(df: pd.DataFrame, out_dir: str, tau: int = 10) -> None:
     ax.legend()
     fig.tight_layout()
     path = os.path.join(out_dir, f"plot_B_loss_curves_tau{tau}.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +144,7 @@ def plot_C(stats: pd.DataFrame, out_dir: str) -> None:
 
     eta = 0.1  # base LR — used to draw Liu bound thresholds
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.0))
 
     for beta in BETAS:
         key  = f"{beta:.1f}"
@@ -172,9 +188,8 @@ def plot_C(stats: pd.DataFrame, out_dir: str) -> None:
     fig.tight_layout()
 
     path = os.path.join(out_dir, "plot_C_momentum_benefit.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +210,7 @@ def plot_Q1_curves(df: pd.DataFrame, out_dir: str) -> None:
         .reset_index()
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 3.0), sharey=True)
 
     for ax, beta in zip(axes, BETAS):
         sub = curves[curves["momentum"] == beta]
@@ -223,9 +238,8 @@ def plot_Q1_curves(df: pd.DataFrame, out_dir: str) -> None:
                  fontsize=11, y=1.01)
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_convergence_curves.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +284,7 @@ def plot_Q1_convergence_metrics(df: pd.DataFrame, out_dir: str) -> None:
     width  = 0.35
     colors_thr = ["#4393c3", "#2166ac"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(COL2, 3.0))
 
     for i, thr in enumerate(THRESHOLDS):
         vals = []
@@ -311,9 +325,8 @@ def plot_Q1_convergence_metrics(df: pd.DataFrame, out_dir: str) -> None:
 
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_convergence_metrics.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +349,7 @@ def plot_Q1_gap(df: pd.DataFrame, out_dir: str) -> None:
     cmap   = plt.cm.Blues
     colors = {tau: cmap(0.35 + 0.65 * i / (len(TAUS) - 1)) for i, tau in enumerate(TAUS)}
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.0))
     for tau in TAUS:
         grp = curves[curves["tau"] == tau].sort_values("epoch")
         ax.plot(grp["epoch"], grp["gap"], color=colors[tau], linewidth=1.8,
@@ -352,9 +365,8 @@ def plot_Q1_gap(df: pd.DataFrame, out_dir: str) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_Q1_train_test_gap.png")
-    fig.savefig(path, dpi=150)
+    _save(fig, path)
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------

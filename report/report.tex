@@ -5,7 +5,7 @@
 \usepackage{amsmath}
 \usepackage{booktabs}
 
-\graphicspath{{../outputs/plots/}}
+\graphicspath{{../outputs/plots/}{../outputs/figures/}{../outputs/step5_ext/}}
 
 \begin{document}
 
@@ -442,12 +442,83 @@ from stochastic staleness.
 % [Q3 TEAMMATE Aleksandar: your regularization results subsection here]
 
 % =========================================================================
+\subsection{LR Correction Rescues Convergence at High Staleness}
+\label{sec:lrs-rescue}
+
+At large delays the dominant harm to SGD is an effective inflation of the
+gradient variance: each stale gradient reflects a landscape that is
+$\tau$ steps in the past, so the noise relative to the current optimum
+scales roughly with $\tau$.
+A natural correction is to scale the learning rate as
+$\eta \to \eta / \tau$ (full inverse) or $\eta \to \eta / \sqrt{\tau}$
+(variance-normalised), matching standard variance-reduction intuitions.
+
+Figure~\ref{fig:lrs-rescue} shows the effect of this correction at
+$\tau{=}64$ (FIFO) and $\mathrm{E}[\tau]{=}64$ ($M{=}65$, geometric).
+Without correction ($\mathrm{lrs}{=}1$), both FIFO $\beta{=}0.9$ and
+geometric $\beta{=}0.9$ collapse to near-random accuracy
+(${\approx}10\%$).
+Applying $\mathrm{lrs}{=}1/\sqrt{64}{=}0.125$ partially restores
+performance; using $\mathrm{lrs}{=}1/64{\approx}0.016$ achieves the
+best recovery, with FIFO reaching 31.3\% and geometric reaching
+\textbf{64.5\%}.
+
+The \textbf{geometric--FIFO gap at $\mathrm{lrs}{=}1/64$}
+(64.5\% vs.\ 31.3\%, $+33.2$\,pp) is the most important finding: LR
+correction is substantially more effective under stochastic delay.
+The periodic fraction $1/M$ of fresh gradients that geometric delay
+provides gives the model a corrective signal that FIFO lacks, allowing
+the rescaled optimiser to continue making progress even after the stale
+directions average out.
+This result implies that real asynchronous systems, where delay is
+stochastic rather than fixed, are considerably more amenable to LR-based
+correction than worst-case deterministic analyses would suggest.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig3_lr_rescue}
+  \caption{LR rescue: final test accuracy vs.\ LR scale at
+           $\tau{=}64$ (FIFO) and $\mathrm{E}[\tau]{=}64$ (geometric).
+           Scaling $\eta \to \eta/\tau$ ($\mathrm{lrs}{=}1/64$)
+           recovers 64.5\% under geometric delay vs.\ 31.3\% under FIFO
+           ($+33.2$\,pp asymmetry).
+           Results for $\beta{=}0.9$; 3 seeds.}
+  \label{fig:lrs-rescue}
+\end{figure}
+
+Figure~\ref{fig:step5-grid} shows the full grid across $\tau \in \{0,4,16,64\}$
+for $\beta{=}0$ and $\beta{=}0.9$ with $\mathrm{lrs}{=}1$.
+The collapse onset is earlier for $\beta{=}0.9$: at $\tau{=}16$ it already
+falls to ${\approx}10\%$ while $\beta{=}0$ remains functional.
+This confirms that the LR correction mainly matters at the operating points
+where momentum is still desired but delay is large.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig1_test_error_vs_staleness}
+  \caption{Final test error vs.\ gradient staleness for FIFO and geometric
+           delay at $\beta{=}0.9$. Geometric delay collapses at lower
+           expected staleness, but is more rescueable with LR correction
+           (see Fig.~\ref{fig:lrs-rescue}).}
+  \label{fig:step5-grid}
+\end{figure}
+
+% =========================================================================
 \section{Discussion}
 % =========================================================================
 
 Our results support a clear picture: momentum and gradient staleness
 compound each other's harm, but the nature of this interaction depends
 on the \emph{distribution} of delays, not just their average magnitude.
+The most actionable finding is that LR correction ($\eta \to \eta/\tau$)
+substantially rescues convergence at large delays --- and does so far more
+effectively under stochastic (geometric) delay than under deterministic
+FIFO delay: at $\mathrm{E}[\tau]{=}64$, $\mathrm{lrs}{=}1/64$ recovers
+64.5\% (geometric) vs.\ 31.3\% (FIFO), a $+33.2$\,pp gap.
+This asymmetry is consistent with the resilience of geometric delay for
+$\beta{=}0$ training and underscores that real async systems, where delay
+is stochastic, are considerably more robust to LR-based correction than
+worst-case deterministic analyses imply.
 
 Under deterministic delay, the Liu et al.\ bound~\cite{liu2018momentum}
 correctly predicts the instability regime and guides the adaptive schedule
@@ -604,6 +675,30 @@ Compute provided by the EPFL IC RunAI cluster.
            The gap is consistent across delay levels, matching the
            deterministic result (Fig.~\ref{fig:q1-gap}).}
   \label{fig:q1-geo-gap}
+\end{figure}
+
+\section{Additional Figures --- Staleness Distribution and Gradient Alignment}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig4_staleness_histograms}
+  \caption{Empirical staleness histograms under geometric delay for
+           $K \in \{5,17,65\}$ workers (3 seeds each).
+           The distribution is approximately geometric with mean $K{-}1$;
+           the heavy tail (rare events with $\tau_t \gg \mathrm{E}[\tau]$)
+           explains the momentum instability observed at high~$K$.}
+  \label{fig:staleness-hist}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig5_grad_angle}
+  \caption{Cosine angle between stale and current gradients vs.\ training
+           epoch, for $K \in \{5,17,65\}$ workers ($\beta{=}0.9$).
+           The angle increases with staleness, confirming that large delays
+           produce gradients increasingly misaligned with the current loss
+           landscape.}
+  \label{fig:grad-angle}
 \end{figure}
 
 \end{document}
