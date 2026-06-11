@@ -1,0 +1,17 @@
+{
+  "dist": "geometric",
+  "K": 65,
+  "c_mean": 4.0,
+  "tau": 0,
+  "momentum": 0.9,
+  "seed": 123,
+  "epochs": 50,
+  "applied_updates": 19485,
+  "staleness": {
+    "mean": 63.80867333846549,
+    "std": 51.558513902885586,
+    "median": 47.0,
+    "p99": 257.0,
+    "max": 589.0
+  }
+}

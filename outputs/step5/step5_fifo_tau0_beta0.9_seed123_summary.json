@@ -1,0 +1,17 @@
+{
+  "dist": "fifo",
+  "K": 0,
+  "c_mean": 4.0,
+  "tau": 0,
+  "momentum": 0.9,
+  "seed": 123,
+  "epochs": 50,
+  "applied_updates": 19550,
+  "staleness": {
+    "mean": 0.0,
+    "std": 0.0,
+    "median": 0.0,
+    "p99": 0.0,
+    "max": 0.0
+  }
+}
