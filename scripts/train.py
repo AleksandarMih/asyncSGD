@@ -57,7 +57,7 @@ from src.data import _train_transform, _test_transform
 # Shared default hyperparameters — importable by sweep scripts
 # ---------------------------------------------------------------------------
 
-EPOCHS      = 100
+EPOCHS      = 50
 LR          = 0.1
 BATCH_SIZE  = 128
 MOMENTUM    = 0.0
