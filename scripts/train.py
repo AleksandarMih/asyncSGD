@@ -276,6 +276,9 @@ def make_csv_path(out_dir: str, args: argparse.Namespace) -> str:
             name = (f"expG_geo_M{args.M}_schedule{args.schedule}_seed{args.seed}.csv")
         elif args.experiment == "H":
             name = (f"expH_geo_M{args.M}_offset{args.bound_offset}_seed{args.seed}.csv")
+        elif args.experiment == "C":
+            name = (f"expC_geo_M{args.M}"
+                    f"_lrscale{args.lr_scale}_beta{args.momentum}_seed{args.seed}.csv")
         else:
             name = (f"exp{args.experiment}_geo_M{args.M}"
                     f"_beta{args.momentum}_seed{args.seed}.csv")

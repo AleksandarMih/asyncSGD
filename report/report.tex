@@ -1,0 +1,704 @@
+\documentclass[10pt,conference,compsocconf]{IEEEtran}
+
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+
+\graphicspath{{../outputs/plots/}{../outputs/figures/}{../outputs/step5_ext/}}
+
+\begin{document}
+
+\title{Asynchronous SGD: Delay, Momentum, and Generalization}
+
+\author{
+  Alex Potocnik \quad Aleksandar Mihaylov \quad Ilia Badanin \\
+  \textit{EPFL, Switzerland --- EE-559 OptML Mini-Project, Group 44}
+}
+
+\maketitle
+
+\begin{abstract}
+Gradient staleness from asynchronous training degrades convergence and
+interacts non-trivially with momentum.
+All experiments in this work \emph{simulate} asynchronous SGD in a single
+sequential process by injecting stale gradients from a buffer; no real
+multi-process or distributed training is performed.
+We investigate three questions: (1)~how does delay affect convergence speed
+and final accuracy; (2)~how does momentum interact with delay, does the
+delay distribution type matter, and can theory-guided scheduling recover
+lost performance; and (3)~whether gradient staleness acts as a regularizer
+analogous to dropout.
+For question~1, we show that delay degrades accuracy monotonically under zero-momentum
+training ($-29.5$\,pp from $\tau{=}0$ to $\tau{=}20$), with convergence harm
+concentrated at LR-decay transitions where stale gradients cannot exploit
+the reduced step size; the normalised area under the learning curve falls to
+only 0.51 at $\tau{=}20$.
+For question~2, we show that $\beta{=}0.9$ collapses catastrophically under
+deterministic delay (dropping from 90.3\% to below 11\% at $\tau{=}20$),
+consistent with Liu et al.~\cite{liu2018momentum}.
+Crucially, switching to \emph{geometric} delay (matching the M/M/1 model
+of Mitliagkas et al.~\cite{mitliagkas2014async}) reverses this asymmetry:
+$\beta{=}0$ becomes far more resilient (82\% vs.\ 52\% at $\mathrm{E}[\tau]{=}20$),
+while high momentum collapses even faster due to rare extreme-lag events.
+An adaptive schedule tracking the Liu bound recovers up to $+5.9$\,pp
+over fixed-$\beta$ baselines.
+% [Q3 TEAMMATE Aleksandar: one sentence summarising regularization findings]
+\end{abstract}
+
+% =========================================================================
+\section{Introduction}
+% =========================================================================
+
+Stochastic gradient descent is the workhorse of deep learning, but
+wall-clock training time on a single processor is a bottleneck at scale.
+Asynchronous SGD~\cite{recht2011hogwild} sidesteps synchronization overhead
+by allowing workers to apply gradients without waiting for each other,
+producing \emph{stale} gradients: a gradient computed on $\theta_t$ is
+applied at time $t{+}\tau$ when the model has already advanced to
+$\theta_{t+\tau}$.
+The practical impact of this staleness on accuracy and convergence depends
+critically on both the magnitude and the \emph{distribution} of the delay.
+Studying this empirically in a real distributed system introduces
+confounders (hardware variance, network jitter, synchronization overhead)
+that make it difficult to isolate the effect of staleness itself.
+We therefore adopt a \emph{controlled simulation} approach: a single
+sequential process injects gradients from a buffer, precisely controlling
+the staleness at each step.
+This allows clean isolation of delay effects but does not capture
+system-level phenomena such as worker heterogeneity or communication overlap.
+
+Three concrete questions motivate this project.
+First, does delay degrade accuracy monotonically, and does it slow
+convergence uniformly across training phases?
+Second, how does explicit momentum interact with staleness, does the
+distribution of delays (deterministic vs.\ stochastic) change this
+interaction, and can theoretical guarantees guide adaptive schedule design?
+Third, can gradient noise from staleness act as a regularizer analogous
+to dropout, improving generalization?
+
+Our contributions for question~1 are:
+\begin{itemize}
+  \item Learning curves across $\tau \in \{0,2,5,10,20\}$ showing that delay
+        shifts convergence trajectories downward and rightward, with
+        disproportionate harm at LR-decay milestones: at $\tau{=}20$ the
+        model effectively stalls after epoch~30 because stale gradients
+        cannot track the post-decay landscape.
+  \item A convergence-speed analysis showing that the 80\% accuracy threshold
+        is reached at epoch~26 for $\tau{=}0$ but is never reached at
+        $\tau{=}20$; the 85\% threshold is unattainable beyond $\tau{=}5$.
+  \item Evidence that delay does not reduce the train-test gap, ruling out
+        an implicit-regularisation interpretation: staleness uniformly
+        degrades optimisation without changing the overfitting regime.
+\end{itemize}
+
+% [Q3 TEAMMATE Aleksandar: expand on question 3 and your contributions here]
+
+Our contributions for question~2 are:
+\begin{itemize}
+  \item A $\tau \times \beta$ grid (45 runs) showing that $\beta{=}0.9$
+        is catastrophically unstable at any nonzero \emph{deterministic}
+        delay, consistent with the Liu et al.\ bound
+        $\tau \lesssim (1-\mu)^2/\eta$.
+  \item A matched geometric-delay sweep ($\tau_t \sim \mathrm{Geom}(1/M)$,
+        45 runs) revealing that the delay distribution type fundamentally
+        changes the momentum-delay interaction: at the same average staleness,
+        stochastic delay is safer for $\beta{=}0$ but more dangerous for
+        $\beta{=}0.9$.
+  \item A negative result for the Mitliagkas equivalence
+        conjecture~\cite{mitliagkas2014async} even under geometric delay,
+        confirming it does not hold empirically on ResNet-20/CIFAR-10.
+  \item Negative explicit momentum ($\beta \in [-0.9, 0]$) as a
+        theoretically grounded compensation, yielding a $+13.3$\,pp gain
+        at $\tau{=}20$.
+  \item An adaptive momentum schedule tracking
+        $\mu_\mathrm{safe}(\eta_t) = 1 - \sqrt{\tau \eta_t}$ as the LR
+        decays, consistently outperforming all fixed-$\beta$ baselines under
+        both delay regimes.
+\end{itemize}
+
+% =========================================================================
+\section{Models and Methods}
+\label{sec:methods}
+% =========================================================================
+
+\subsection{Common Setup}
+
+All experiments train ResNet-20~\cite{he2016resnet} on
+CIFAR-10~\cite{krizhevsky2009cifar} (50k/10k split).
+Base learning rate $\eta{=}0.1$, decayed by $\times 0.1$ at epochs 30 and
+40 (50 total), batch size 128, weight decay $10^{-4}$.
+Every configuration is run with three random seeds \{42, 123, 456\}; we
+report mean $\pm$ standard deviation of final test accuracy.
+
+For question~1, we reuse the common setup above without modification.
+We analyse per-epoch \texttt{train\_acc} and \texttt{test\_acc} logged during
+the $\tau \times \beta$ deterministic grid sweep (45 runs, 3 seeds each).
+
+\subsection{Delay Simulation}
+
+All delay experiments run in a \textbf{single sequential process}.
+No workers, threads, or network communication are involved.
+Staleness is injected artificially via a gradient buffer: at each step,
+a fresh gradient is computed and stored, and a \emph{stale} gradient
+from the buffer is applied to the parameters.
+This design gives exact, reproducible control over the delay distribution
+and eliminates confounders from real distributed systems, at the cost of
+not modelling system-level effects.
+
+\paragraph{Deterministic (FIFO) delay.}
+A FIFO buffer of depth $\tau$ is maintained.
+After computing a fresh gradient on $\theta_t$, we push it onto the buffer
+and apply the oldest buffered gradient to the parameters.
+This gives a \emph{deterministic} staleness of exactly $\tau$ steps at
+every update --- a controlled baseline that isolates delay magnitude.
+
+\paragraph{Geometric (stochastic) delay.}
+To match the M/M/1 queue model from which Mitliagkas et
+al.~\cite{mitliagkas2014async} derive their implicit-momentum result,
+we sample a fresh delay at every step:
+\begin{equation}
+  \tau_t \sim \mathrm{Geom}(1/M) - 1, \qquad \mathrm{E}[\tau_t] = M-1.
+\end{equation}
+We choose $M \in \{1, 3, 6, 11, 21\}$ so that $\mathrm{E}[\tau] \in
+\{0, 2, 5, 10, 20\}$ matches the deterministic grid exactly, enabling
+direct comparison at the same average staleness.
+A rolling buffer stores the last $5M$ gradient snapshots; each step
+looks up the one sampled by $\tau_t$.
+
+\paragraph{Optimizer.}
+PyTorch's \texttt{SGD} rejects $\beta < 0$, so we implement a custom
+\texttt{SGDMomentum} supporting any $\beta \in \mathbb{R}$:
+\begin{equation}
+  v_t = \beta v_{t-1} + g_t,\qquad \theta_t = \theta_{t-1} - \eta v_t.
+\end{equation}
+
+\paragraph{Theoretical grounding.}
+Liu et al.~\cite{liu2018momentum} prove that for Async-MSGD to converge
+on non-convex objectives the delay must satisfy $\tau \lesssim (1-\mu)^2/\eta$.
+Inverting this gives a \emph{safe momentum ceiling}:
+\begin{equation}
+  \mu_\mathrm{safe}(\eta,\tau) = 1 - \sqrt{\tau\cdot\eta}.
+  \label{eq:liu}
+\end{equation}
+At $\eta{=}0.1$: $\mu_\mathrm{safe} = 0.29$ ($\tau{=}5$), $0.0$
+($\tau{=}10$), $-0.41$ ($\tau{=}20$).
+This bound was derived for deterministic fixed delay; applying it to
+geometric delay via $\mathrm{E}[\tau] = M-1$ is an approximation
+we test empirically.
+
+\paragraph{Experiments.}
+Table~\ref{tab:exp-summary} summarises all experiment groups for
+question~2.
+Exp~F sweeps negative explicit momentum $\beta \in \{-0.1,\ldots,-0.9\}$.
+Exp~G evaluates four adaptive schedules: \texttt{at\_bound}
+($\mu = \mu_\mathrm{safe}(\eta_t,\tau)$), \texttt{below\_bound}
+($\mu_\mathrm{safe}-0.3$), \texttt{above\_bound}
+($\min(0.95,\,\mu_\mathrm{safe}+0.3)$), and \texttt{neg\_ramp}
+(negative Mitliagkas phase, then $\mu_\mathrm{safe}$ after first LR decay).
+Geo~Exp~A tests the Mitliagkas equivalence under stochastic delay.
+
+\begin{table}[tbp]
+  \centering
+  \caption{Momentum experiment summary (3 seeds each).}
+  \label{tab:exp-summary}
+  \small
+  \begin{tabular}{llll}
+    \toprule
+    Exp & $\tau$ / $M$ & $\beta$ / schedule & Runs \\
+    \midrule
+    Step~3 det.   & $\tau\in\{0,2,5,10,20\}$  & $\{0.0,\,0.5,\,0.9\}$   & 45 \\
+    Exp~A det.    & $\tau\in\{0\}$            & Mitliagkas implicit      & 12 \\
+    Exp~F det.    & $\tau\in\{5,10,20\}$      & $[-0.9,\,0.0]$          & 36 \\
+    Exp~G det.    & $\tau\in\{5,10,20\}$      & 4 adaptive schedules     & 36 \\
+    Exp~H det.    & $\tau\in\{5,10,20\}$      & $\delta \in \{0.1,\ldots,0.7\}$ & 36 \\
+    \midrule
+    Step~3 geo.   & $M\in\{1,3,6,11,21\}$    & $\{0.0,\,0.5,\,0.9\}$   & 45 \\
+    Exp~A geo.    & $M\in\{3,6\}$             & $\beta{=}0$ vs.\ $\mu_S$ & 12 \\
+    Exp~G geo.    & $M\in\{3,6,11\}$          & 4 adaptive schedules     & 36 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% [Q3 TEAMMATE Aleksandar: describe your regularization experiment setup]
+
+% =========================================================================
+\section{Results}
+\label{sec:results}
+% =========================================================================
+
+\subsection{Effect of Delay on Convergence}
+
+Figure~\ref{fig:q1-curves} shows per-epoch test accuracy for
+$\beta{=}0$ (no momentum) and $\beta{=}0.9$ across
+$\tau \in \{0,2,5,10,20\}$.
+
+\paragraph{Monotone accuracy degradation.}
+Under $\beta{=}0$, final test accuracy decreases monotonically with $\tau$:
+87.2\% ($\tau{=}0$), 86.9\% ($\tau{=}2$), 85.3\% ($\tau{=}5$), 81.6\%
+($\tau{=}10$), and 57.7\% ($\tau{=}20$).
+The degradation is gradual up to $\tau{=}10$ (roughly $-1$\,pp per unit
+delay) but becomes catastrophic at $\tau{=}20$, where the model fails to
+reduce training loss from the first epoch.
+
+\paragraph{Phase-specific convergence harm.}
+The LR decay at epoch~30 is the most sensitive phase.
+For small delays ($\tau \leq 5$), curves largely track the no-delay
+trajectory and the step reduction produces a sharp accuracy jump comparable
+to the baseline.
+At $\tau{=}10$, the response is muted.
+At $\tau{=}20$, the first LR decay has minimal effect: gradients computed
+on the pre-decay landscape are applied after the step size has dropped,
+and their direction is too misaligned to exploit the new regime.
+
+\paragraph{Convergence speed.}
+Figure~\ref{fig:q1-metrics} quantifies this more precisely.
+Under $\beta{=}0$, the 80\% accuracy threshold is first reached at
+epoch~26 for $\tau{=}0$ and epoch~31 for $\tau{=}10$;
+$\tau{=}20$ never reaches 80\%.
+The 85\% threshold becomes unreachable beyond $\tau{=}5$.
+The normalised area under the learning curve (AUC) captures both speed and
+ceiling in one scalar: it falls from 1.00 at $\tau{=}0$ to 0.81 at
+$\tau{=}10$ and 0.51 at $\tau{=}20$, meaning the model achieves only half
+the training efficiency of the no-delay baseline.
+
+\paragraph{No implicit regularisation.}
+Figure~\ref{fig:q1-gap} (Appendix) shows that the train-test accuracy gap
+remains roughly constant across all $\tau$ values.
+Delay does not reduce overfitting; it degrades optimisation without
+changing the generalisation regime.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_convergence_curves}
+  \caption{Test accuracy vs.\ epoch for $\beta{=}0$ (left) and $\beta{=}0.9$
+           (right) across $\tau \in \{0,2,5,10,20\}$ (deterministic delay).
+           Mean over 3 seeds, shading $\pm$std.
+           Dotted vertical lines mark LR decay milestones (epochs 30, 40).}
+  \label{fig:q1-curves}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_convergence_metrics}
+  \caption{Left: first epoch reaching 80\%/85\% test accuracy under
+           $\beta{=}0$ (DNR~= did not reach within 50 epochs).
+           Right: normalised AUC of the learning curve relative to the
+           $\tau{=}0$ baseline; $\tau{=}20$ retains only half the
+           training efficiency.}
+  \label{fig:q1-metrics}
+\end{figure}
+
+\paragraph{Geometric delay comparison.}
+Figures~\ref{fig:q1-geo-curves} and~\ref{fig:q1-geo-metrics} repeat the
+same analysis under geometric delay ($\tau_t \sim \mathrm{Geom}(1/M){-}1$).
+The qualitative pattern is preserved: accuracy degrades monotonically and
+the AUC falls with increasing average staleness.
+However, the degradation is less severe than under deterministic delay at
+the same expected staleness.
+For $\beta{=}0.9$, geometric delay is actually \emph{more} harmful because
+rare large-lag events destabilise momentum even at small $\mathrm{E}[\tau]$.
+This asymmetry is explored further in Section~\ref{sec:results}.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_convergence_curves}
+  \caption{Test accuracy vs.\ epoch for $\beta{=}0$ (left) and $\beta{=}0.9$
+           (right) across $\mathrm{E}[\tau] \in \{0,2,5,10,20\}$ (geometric
+           delay). Same layout as Fig.~\ref{fig:q1-curves}; degradation is
+           milder for $\beta{=}0$ but more severe for $\beta{=}0.9$.}
+  \label{fig:q1-geo-curves}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_convergence_metrics}
+  \caption{Epochs-to-threshold and normalised AUC under geometric delay
+           ($\beta{=}0$). Compared to deterministic delay
+           (Fig.~\ref{fig:q1-metrics}), geometric delay degrades AUC less
+           steeply, consistent with its lower variance.}
+  \label{fig:q1-geo-metrics}
+\end{figure}
+
+\subsection{Deterministic Delay: Momentum Collapse and Recovery}
+
+Figure~\ref{fig:momentum-collapse} shows final test accuracy across the
+$\tau \times \beta$ grid.
+Without delay ($\tau{=}0$), momentum helps: $\beta{=}0.9$ achieves 90.3\%
+vs.\ 87.2\% for $\beta{=}0$.
+Under delay, this reverses sharply.
+At $\tau{=}5$, $\beta{=}0.9$ drops to 70.5\% while $\beta{=}0$ retains
+85.3\% ($-14.8$\,pp gap).
+At $\tau{=}10$, $\beta{=}0.9$ collapses to 28.7\% while $\beta{=}0$
+holds at 81.6\%.
+At $\tau{=}20$, $\beta{=}0.9$ reaches 10.6\% (random-class level).
+These results are fully consistent with Eq.~\eqref{eq:liu}: at $\eta{=}0.1$,
+$\beta{=}0.9$ is unsafe for any $\tau \geq 1$.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_C_momentum_benefit}
+  \caption{Final test accuracy vs.\ delay $\tau$ for three fixed momentum
+           values (deterministic delay). $\beta{=}0.9$ is best at $\tau{=}0$
+           but collapses under any delay; $\beta{=}0$ is most robust.
+           Mean $\pm$ std, 3 seeds.}
+  \label{fig:momentum-collapse}
+\end{figure}
+
+\paragraph{Negative momentum (Exp~F).}
+At $\tau{=}20$, the best fixed negative value ($\beta{=}{-}0.9$) reaches
+71.0\%, a $+13.3$\,pp gain over the $\beta{=}0$ baseline of 57.7\%.
+Gains diminish at smaller delays: at $\tau{=}5$, large negative $\beta$
+underperforms $\beta{=}0$ (Appendix, Fig.~\ref{fig:neg-momentum}).
+
+\paragraph{Adaptive schedule (Exp~G).}
+Figure~\ref{fig:adaptive-summary} compares four adaptive schedules against
+fixed baselines, with a dashed line marking the no-delay ceiling (90.3\%).
+The \texttt{above\_bound} schedule ($\mu = \min(0.95,\,\mu_\mathrm{safe}+0.3)$)
+consistently achieves the highest accuracy: 88.3\% at $\tau{=}5$
+($-2.0$\,pp below ceiling), 85.1\% at $\tau{=}10$, and 63.6\% at
+$\tau{=}20$ --- outperforming $\beta{=}0$ by $+3.0$, $+3.5$, and
+$+5.9$\,pp respectively.
+Operating \emph{above} the Liu bound by a moderate offset does not cause
+divergence, suggesting the bound is conservative for practical LR schedules
+with decay.
+Exp~H (Appendix, Fig.~\ref{fig:above-bound-sweep}) sweeps the offset
+$\delta \in \{0.1, 0.3, 0.5, 0.7\}$ and confirms $\delta{=}0.3$ as the
+sweet spot: larger offsets degrade at $\tau{=}20$ while smaller ones
+leave accuracy on the table.
+The \texttt{neg\_ramp} schedule consistently underperforms, likely because
+the negative phase corrupts the momentum buffer before the switch.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_L2_adaptive_summary}
+  \caption{Adaptive vs.\ fixed momentum under deterministic delay: final
+           test accuracy by schedule and $\tau$.
+           Dashed line marks the no-delay ceiling ($\tau{=}0$, $\beta{=}0.9$,
+           90.3\%). \texttt{above\_bound} outperforms all fixed-$\beta$
+           baselines at every delay.}
+  \label{fig:adaptive-summary}
+\end{figure}
+
+\subsection{Delay Distribution Matters: Geometric vs.\ Deterministic}
+
+Figure~\ref{fig:geo-comparison} compares deterministic and geometric delay
+at matched average staleness $\mathrm{E}[\tau] = \tau$.
+The two regimes diverge qualitatively at high staleness.
+
+\paragraph{$\beta{=}0$ (no momentum).}
+Geometric delay is substantially more resilient.
+At $\mathrm{E}[\tau]{=}20$ (M=21), geo reaches 82.1\% vs.\ det 52.3\%
+($+29.8$\,pp).
+The reason: under geometric delay, roughly $1/M$ steps receive a
+completely fresh gradient ($\tau_t{=}0$), which periodically corrects
+the parameter trajectory even at high average staleness.
+Deterministic delay offers no such recovery --- every gradient is exactly
+$\tau$ steps stale.
+
+\paragraph{$\beta{=}0.9$ (high momentum).}
+The roles reverse at medium-to-high staleness.
+At $\mathrm{E}[\tau]{=}10$, geometric delay collapses completely
+(9.9\%, random guessing) while deterministic delay degrades more
+gracefully (28.7\%).
+The geometric tail produces occasional extreme lags ($\tau_t \gg
+\mathrm{E}[\tau]$) that corrupt the momentum accumulator; with $\beta{=}0.9$
+the velocity is sticky and cannot recover.
+Both regimes collapse at $\mathrm{E}[\tau]{=}20$.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_geo_step3_comparison}
+  \caption{Final test accuracy vs.\ average staleness for deterministic
+           (solid) and geometric (dashed) delay.
+           For $\beta{=}0$ and $\beta{=}0.5$, geometric delay is more
+           resilient at high staleness.
+           For $\beta{=}0.9$, geometric delay collapses faster due to
+           momentum amplifying rare extreme-lag events.}
+  \label{fig:geo-comparison}
+\end{figure}
+
+\paragraph{Mitliagkas equivalence under geometric delay (Exp~A geo).}
+Mitliagkas et al.\ conjecture that $M$ async workers with geometric
+staleness induce implicit momentum $\mu_S = (M{-}1)/M$, making
+$(M,\,\beta{=}0)$ equivalent to $(\tau{=}0,\,\beta{=}\mu_S)$.
+Even under geometric delay --- the exact distributional setting of the
+proof --- the equivalence does not hold empirically.
+At $M{=}3$ ($\mu_S{=}0.667$), the geometric-delay run reaches 85.8\%
+vs.\ 89.2\% for the explicit-momentum baseline ($-3.4$\,pp gap).
+At $M{=}6$ ($\mu_S{=}0.833$), the gap widens to $-4.5$\,pp
+(see Appendix, Fig.~\ref{fig:geo-equivalence}).
+The stochastic gradient variance introduced by geometric delay is not
+captured by the explicit momentum analogue.
+
+\paragraph{Adaptive schedule under geometric delay (Exp~G geo).}
+The Liu-bound schedule transfers to geometric delay: \texttt{above\_bound}
+still outperforms fixed $\beta{=}0$ at all $M$ values tested (Appendix,
+Fig.~\ref{fig:geo-adaptive}).
+However, gains are smaller than under deterministic delay, and variance
+across seeds is higher, consistent with the increased gradient noise
+from stochastic staleness.
+
+% [Q3 TEAMMATE Aleksandar: your regularization results subsection here]
+
+% =========================================================================
+\subsection{LR Correction Rescues Convergence at High Staleness}
+\label{sec:lrs-rescue}
+
+At large delays the dominant harm to SGD is an effective inflation of the
+gradient variance: each stale gradient reflects a landscape that is
+$\tau$ steps in the past, so the noise relative to the current optimum
+scales roughly with $\tau$.
+A natural correction is to scale the learning rate as
+$\eta \to \eta / \tau$ (full inverse) or $\eta \to \eta / \sqrt{\tau}$
+(variance-normalised), matching standard variance-reduction intuitions.
+
+Figure~\ref{fig:lrs-rescue} shows the effect of this correction at
+$\tau{=}64$ (FIFO) and $\mathrm{E}[\tau]{=}64$ ($M{=}65$, geometric).
+Without correction ($\mathrm{lrs}{=}1$), both FIFO $\beta{=}0.9$ and
+geometric $\beta{=}0.9$ collapse to near-random accuracy
+(${\approx}10\%$).
+Applying $\mathrm{lrs}{=}1/\sqrt{64}{=}0.125$ partially restores
+performance; using $\mathrm{lrs}{=}1/64{\approx}0.016$ achieves the
+best recovery, with FIFO reaching 31.3\% and geometric reaching
+\textbf{64.5\%}.
+
+The \textbf{geometric--FIFO gap at $\mathrm{lrs}{=}1/64$}
+(64.5\% vs.\ 31.3\%, $+33.2$\,pp) is the most important finding: LR
+correction is substantially more effective under stochastic delay.
+The periodic fraction $1/M$ of fresh gradients that geometric delay
+provides gives the model a corrective signal that FIFO lacks, allowing
+the rescaled optimiser to continue making progress even after the stale
+directions average out.
+This result implies that real asynchronous systems, where delay is
+stochastic rather than fixed, are considerably more amenable to LR-based
+correction than worst-case deterministic analyses would suggest.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig3_lr_rescue}
+  \caption{LR rescue: final test accuracy vs.\ LR scale at
+           $\tau{=}64$ (FIFO) and $\mathrm{E}[\tau]{=}64$ (geometric).
+           Scaling $\eta \to \eta/\tau$ ($\mathrm{lrs}{=}1/64$)
+           recovers 64.5\% under geometric delay vs.\ 31.3\% under FIFO
+           ($+33.2$\,pp asymmetry).
+           Results for $\beta{=}0.9$; 3 seeds.}
+  \label{fig:lrs-rescue}
+\end{figure}
+
+Figure~\ref{fig:step5-grid} shows the full grid across $\tau \in \{0,4,16,64\}$
+for $\beta{=}0$ and $\beta{=}0.9$ with $\mathrm{lrs}{=}1$.
+The collapse onset is earlier for $\beta{=}0.9$: at $\tau{=}16$ it already
+falls to ${\approx}10\%$ while $\beta{=}0$ remains functional.
+This confirms that the LR correction mainly matters at the operating points
+where momentum is still desired but delay is large.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig1_test_error_vs_staleness}
+  \caption{Final test error vs.\ gradient staleness for FIFO and geometric
+           delay at $\beta{=}0.9$. Geometric delay collapses at lower
+           expected staleness, but is more rescueable with LR correction
+           (see Fig.~\ref{fig:lrs-rescue}).}
+  \label{fig:step5-grid}
+\end{figure}
+
+% =========================================================================
+\section{Discussion}
+% =========================================================================
+
+Our results support a clear picture: momentum and gradient staleness
+compound each other's harm, but the nature of this interaction depends
+on the \emph{distribution} of delays, not just their average magnitude.
+The most actionable finding is that LR correction ($\eta \to \eta/\tau$)
+substantially rescues convergence at large delays --- and does so far more
+effectively under stochastic (geometric) delay than under deterministic
+FIFO delay: at $\mathrm{E}[\tau]{=}64$, $\mathrm{lrs}{=}1/64$ recovers
+64.5\% (geometric) vs.\ 31.3\% (FIFO), a $+33.2$\,pp gap.
+This asymmetry is consistent with the resilience of geometric delay for
+$\beta{=}0$ training and underscores that real async systems, where delay
+is stochastic, are considerably more robust to LR-based correction than
+worst-case deterministic analyses imply.
+
+Under deterministic delay, the Liu et al.\ bound~\cite{liu2018momentum}
+correctly predicts the instability regime and guides the adaptive schedule
+design.
+The finding that operating $\delta{=}0.3$ above the bound is empirically
+safe suggests the bound is conservative, likely because it must hold for
+arbitrary non-convex landscapes whereas CIFAR-10/ResNet-20 is comparatively
+well-behaved after LR decay.
+
+Under geometric delay, the picture is more nuanced.
+The stochastic variance introduced by the geometric tail helps $\beta{=}0$
+training (periodic fresh gradients act as a corrective signal) but
+catastrophically amplifies the harm for $\beta{=}0.9$ (the heavy tail
+corrupts the momentum accumulator irreversibly at intermediate delays).
+This suggests that practitioners choosing momentum for asynchronous systems
+should account for the staleness distribution, not just its mean: geometric
+or heavy-tailed delays call for more conservative momentum coefficients
+than deterministic analyses would predict.
+
+The Mitliagkas equivalence conjecture is not reproduced even under the
+geometric delay distribution it was derived for.
+We attribute this to gradient variance: the equivalence is a spectral
+argument about the update operator, but in finite-epoch training on
+ResNet-20, the additional noise from stochastic delay prevents the model
+from attaining the same accuracy as explicit momentum at $\tau{=}0$.
+
+\paragraph{Simulation scope and limitations.}
+All findings are based on single-process gradient-buffer simulation.
+Real async SGD introduces additional phenomena not modelled here: variable
+worker speed, communication latency, memory consistency across processes,
+and batch-norm statistics that diverge per worker.
+The geometric delay model is theoretically motivated (M/M/1 queue), but
+real staleness distributions depend on hardware and workload in ways that
+may deviate from geometric.
+Our results should therefore be interpreted as isolating the effect of
+\emph{delay magnitude and distribution on the optimization dynamics}, not
+as direct performance predictions for a production distributed system.
+
+Delay degrades convergence in a phase-specific rather than uniform manner.
+The LR-decay milestone at epoch~30 is the most sensitive point: gradients
+computed on the pre-decay landscape are applied after the step size has
+already dropped, and at high $\tau$ the mismatch prevents the model from
+capitalising on the smaller learning rate.
+Quantitatively, the normalised AUC falls to 0.51 at $\tau{=}20$, meaning
+the model achieves only half the training efficiency of the no-delay baseline
+over 50 epochs.
+This suggests that cosine or warmup-aware LR schedules, which change the
+step size gradually rather than in discrete steps, may be more robust to
+gradient staleness than the step-decay used here.
+
+% [Q3 TEAMMATE Aleksandar: your discussion paragraph here]
+
+% =========================================================================
+\section{Summary}
+% =========================================================================
+
+The delay distribution type is as important as delay magnitude for
+momentum-based async SGD.
+Geometric delay is more forgiving for zero-momentum training but more
+dangerous for high momentum; an adaptive schedule calibrated to the Liu
+et al.\ bound recovers most lost accuracy under both regimes, with the
+empirically optimal point lying slightly above the conservative theoretical
+ceiling.
+Under zero-momentum training, delay degrades accuracy monotonically but
+unevenly, inflicting the greatest harm at LR-decay transitions where stale
+gradients cannot exploit the reduced step size; normalised AUC drops to 0.51
+at $\tau{=}20$ and the 80\% accuracy threshold is never reached.
+% [Q3 TEAMMATE Aleksandar: one-sentence summary of your findings]
+
+\section*{Acknowledgements}
+ResNet-20 implementation adapted from Idelbayev (public PyTorch
+re-implementation of He et al.~\cite{he2016resnet}).
+Compute provided by the EPFL IC RunAI cluster.
+
+\newpage
+\bibliographystyle{IEEEtran}
+\bibliography{literature}
+
+% =========================================================================
+\appendix
+\section{Additional Figures --- Momentum Experiments}
+% =========================================================================
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_K_negative_momentum}
+  \caption{Exp~F: negative explicit momentum sweep at
+           $\tau \in \{5,10,20\}$ (deterministic delay).
+           Negative $\beta$ improves over $\beta{=}0$ at $\tau{=}20$
+           (peak gain 13.3\,pp at $\beta{=}{-}0.9$) but underperforms
+           at $\tau{=}5$.}
+  \label{fig:neg-momentum}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_L1_adaptive_curves}
+  \caption{Exp~G: per-epoch convergence curves for four adaptive
+           schedules at each $\tau$ (deterministic delay).
+           \texttt{above\_bound} converges faster and to a higher
+           final accuracy at all delays.}
+  \label{fig:adaptive-curves}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_M_above_bound_sweep}
+  \caption{Exp~H: sweet-spot sweep for the offset $\delta$ above the Liu
+           bound ($\mu = \min(0.95,\,\mu_\mathrm{safe} + \delta)$) at
+           $\tau \in \{5, 10, 20\}$.
+           $\delta{=}0.3$ is consistently best or tied-best across all
+           delays; larger offsets ($\delta \geq 0.5$) degrade at high~$\tau$.}
+  \label{fig:above-bound-sweep}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_geo_equivalence}
+  \caption{Mitliagkas equivalence test under geometric delay.
+           Geo $M{=}3$/$M{=}6$ with $\beta{=}0$ (blue) vs.\
+           deterministic $\tau{=}0$ with $\beta{=}\mu_S$ (orange).
+           The equivalence does not hold empirically even under the
+           geometric distributional assumption of the original proof.}
+  \label{fig:geo-equivalence}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_geo_adaptive}
+  \caption{Exp~G under geometric delay: adaptive Liu-bound schedule
+           (dashed) vs.\ deterministic delay (solid) at matched
+           $\mathrm{E}[\tau]$. Black lines show the $\beta{=}0$
+           reference. \texttt{above\_bound} remains the best schedule
+           under geometric delay, but with larger variance.}
+  \label{fig:geo-adaptive}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_train_test_gap}
+  \caption{Train-test accuracy gap (train\,$-$\,test) vs.\ epoch for
+           $\beta{=}0$ across $\tau \in \{0,2,5,10,20\}$ (deterministic
+           delay). The gap is consistent across delay levels, indicating
+           that staleness degrades optimisation without acting as implicit
+           regularisation.}
+  \label{fig:q1-gap}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{plot_Q1_geo_train_test_gap}
+  \caption{Train-test accuracy gap vs.\ epoch for $\beta{=}0$ across
+           $\mathrm{E}[\tau] \in \{0,2,5,10,20\}$ (geometric delay).
+           The gap is consistent across delay levels, matching the
+           deterministic result (Fig.~\ref{fig:q1-gap}).}
+  \label{fig:q1-geo-gap}
+\end{figure}
+
+\section{Additional Figures --- Staleness Distribution and Gradient Alignment}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig4_staleness_histograms}
+  \caption{Empirical staleness histograms under geometric delay for
+           $K \in \{5,17,65\}$ workers (3 seeds each).
+           The distribution is approximately geometric with mean $K{-}1$;
+           the heavy tail (rare events with $\tau_t \gg \mathrm{E}[\tau]$)
+           explains the momentum instability observed at high~$K$.}
+  \label{fig:staleness-hist}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{fig5_grad_angle}
+  \caption{Cosine angle between stale and current gradients vs.\ training
+           epoch, for $K \in \{5,17,65\}$ workers ($\beta{=}0.9$).
+           The angle increases with staleness, confirming that large delays
+           produce gradients increasingly misaligned with the current loss
+           landscape.}
+  \label{fig:grad-angle}
+\end{figure}
+
+\end{document}
