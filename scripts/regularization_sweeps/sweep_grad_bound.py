@@ -27,6 +27,32 @@ from train import (
 )
 
 # ---------------------------------------------------------------------------
+# Style — matches make_figures.py
+# ---------------------------------------------------------------------------
+plt.rcParams.update({
+    "font.family": "DejaVu Serif",
+    "font.size": 8,
+    "axes.titlesize": 8,
+    "axes.labelsize": 8,
+    "xtick.labelsize": 7,
+    "ytick.labelsize": 7,
+    "legend.fontsize": 7,
+    "lines.linewidth": 1.2,
+    "axes.linewidth": 0.7,
+    "xtick.major.width": 0.7,
+    "ytick.major.width": 0.7,
+    "xtick.minor.width": 0.5,
+    "ytick.minor.width": 0.5,
+    "figure.dpi": 300,
+    "savefig.dpi": 300,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
+
+COL1 = 3.5   # single-column width (inches)
+COL2 = 7.0   # double-column width (inches)
+
+# ---------------------------------------------------------------------------
 # Sweep hyperparameters — edit here
 # ---------------------------------------------------------------------------
 
@@ -59,7 +85,7 @@ def plot_grad_bound(
     """Two-subplot figure: weight norm and mean squared gradient norm vs epoch."""
     df = pd.read_csv(traj_csv_path)
 
-    fig, (ax_wn, ax_gn) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, (ax_wn, ax_gn) = plt.subplots(1, 2, figsize=(COL2, 3.5))
 
     for tau, grp in df.groupby("tau"):
         epochs = grp["epoch"].to_numpy()
@@ -68,38 +94,38 @@ def plot_grad_bound(
         # Left: weight norm
         mean_wn = grp["mean_weight_norm"].to_numpy()
         std_wn  = grp["std_weight_norm"].to_numpy()
-        ax_wn.plot(epochs, mean_wn, label=label, linewidth=1.5)
+        ax_wn.plot(epochs, mean_wn, label=label, linewidth=1.2)
         ax_wn.fill_between(epochs, mean_wn - std_wn, mean_wn + std_wn, alpha=0.15)
 
         # Right: mean squared gradient norm
         mean_gs = grp["mean_mean_grad_sq"].to_numpy()
         std_gs  = grp["std_mean_grad_sq"].to_numpy()
-        ax_gn.plot(epochs, mean_gs, label=label, linewidth=1.5)
+        ax_gn.plot(epochs, mean_gs, label=label, linewidth=1.2)
         ax_gn.fill_between(epochs, mean_gs - std_gs, mean_gs + std_gs, alpha=0.15)
 
     # Theoretical bound overlay on left subplot
     bound_epochs = np.arange(0, EPOCHS + 1)
     bound_t      = bound_epochs * steps_per_epoch  # SGD steps
     bound_y      = w0_mean + LR * G * bound_t
-    ax_wn.plot(bound_epochs, bound_y, color="black", linestyle="--", linewidth=1.5,
+    ax_wn.plot(bound_epochs, bound_y, color="black", linestyle="--", linewidth=1.2,
                label="Bound: ‖w₀‖ + η G t")
 
     ax_wn.set_xlabel("Epoch")
     ax_wn.set_ylabel("Weight L2 norm  ‖w‖")
     ax_wn.set_title("Weight norm with theoretical bound  |  β=0  wd=0")
-    ax_wn.legend(fontsize=8)
-    ax_wn.grid(True, alpha=0.3)
+    ax_wn.legend()
+    ax_wn.grid(True, linewidth=0.4, alpha=0.5)
 
     ax_gn.set_xlabel("Epoch")
     ax_gn.set_ylabel("Mean ‖∇f‖²")
     ax_gn.set_title("Per-step squared gradient norm  |  β=0  wd=0")
-    ax_gn.legend(fontsize=8)
-    ax_gn.grid(True, alpha=0.3)
+    ax_gn.legend()
+    ax_gn.grid(True, linewidth=0.4, alpha=0.5)
 
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, f"grad_bound_{QTAG}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
@@ -115,18 +141,18 @@ def plot_weight_norm(
         epochs  = grp["epoch"].to_numpy()
         mean_wn = grp["mean_weight_norm"].to_numpy()
         std_wn  = grp["std_weight_norm"].to_numpy()
-        ax.plot(epochs, mean_wn, label=_delay_label(tau), linewidth=1.5)
+        ax.plot(epochs, mean_wn, label=_delay_label(tau), linewidth=1.2)
         ax.fill_between(epochs, mean_wn - std_wn, mean_wn + std_wn, alpha=0.15)
 
     if bound_y is not None:
         epochs_all = np.arange(0, int(df["epoch"].max()) + 1)
         ax.plot(epochs_all, bound_y, color="black", linestyle="--",
-                linewidth=1.5, label=bound_label)
+                linewidth=1.2, label=bound_label)
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Weight L2 norm  ‖w‖")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.grid(True, linewidth=0.4, alpha=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -247,36 +273,36 @@ def main() -> None:
     t_steps    = epochs_all * steps_per_epoch
 
     # 1. No bound
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     plot_weight_norm(traj_df, ax, bound_y=None, bound_label=None)
     ax.set_title("Weight norm vs epoch  |  β=0  wd=0")
     fig.tight_layout()
     out_path = os.path.join(PLOT_DIR, f"weight_norm_no_bound_{QTAG}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
     # 2. Log bound: ‖w₀‖ + η·G·log(1 + t)
     bound_log = w0_mean + LR * G * np.log1p(t_steps)
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     plot_weight_norm(traj_df, ax, bound_y=bound_log,
                      bound_label="Bound: ‖w₀‖ + η G log(1+t)")
     ax.set_title("Weight norm — log bound  |  β=0  wd=0")
     fig.tight_layout()
     out_path = os.path.join(PLOT_DIR, f"weight_norm_bound_log_{QTAG}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
     # 3. Epoch bound: ‖w₀‖ + η·G·epoch
     bound_epoch = w0_mean + LR * G * epochs_all
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     plot_weight_norm(traj_df, ax, bound_y=bound_epoch,
                      bound_label="Bound: ‖w₀‖ + η G · epoch")
     ax.set_title("Weight norm — epoch bound  |  β=0  wd=0")
     fig.tight_layout()
     out_path = os.path.join(PLOT_DIR, f"weight_norm_bound_epoch_{QTAG}.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 

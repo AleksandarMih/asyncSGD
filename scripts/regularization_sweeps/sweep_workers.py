@@ -31,6 +31,32 @@ from train import (
     train_one_run_async,
 )
 
+# ---------------------------------------------------------------------------
+# Style — matches make_figures.py
+# ---------------------------------------------------------------------------
+plt.rcParams.update({
+    "font.family": "DejaVu Serif",
+    "font.size": 8,
+    "axes.titlesize": 8,
+    "axes.labelsize": 8,
+    "xtick.labelsize": 7,
+    "ytick.labelsize": 7,
+    "legend.fontsize": 7,
+    "lines.linewidth": 1.2,
+    "axes.linewidth": 0.7,
+    "xtick.major.width": 0.7,
+    "ytick.major.width": 0.7,
+    "xtick.minor.width": 0.5,
+    "ytick.minor.width": 0.5,
+    "figure.dpi": 300,
+    "savefig.dpi": 300,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
+
+COL1 = 3.5   # single-column width (inches)
+COL2 = 7.0   # double-column width (inches)
+
 WEIGHT_DECAY = 1e-4
 
 # ---------------------------------------------------------------------------
@@ -63,29 +89,29 @@ def plot_summary(summary_csv_path: str, save_dir: str) -> None:
     df = pd.read_csv(summary_csv_path, index_col="num_workers")
     workers = df.index.to_numpy(dtype=int)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 2.5))
     for ax, metric, ylabel, title in [
         (axes[0], "test_acc",   "Top-1 accuracy", "Test accuracy vs N workers"),
         (axes[1], "test_error", "Top-1 error",    "Test error vs N workers"),
     ]:
         mean = df[f"mean_{metric}"].to_numpy()
         std  = df[f"std_{metric}"].to_numpy()
-        ax.plot(workers, mean, marker="o", linewidth=1.5)
+        ax.plot(workers, mean, marker="o", linewidth=1.2)
         ax.fill_between(workers, mean - std, mean + std, alpha=0.25)
         ax.set_xticks(workers)
         ax.set_xlabel("Number of workers N")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, linewidth=0.4, alpha=0.5)
 
     fig.suptitle(
         f"Worker sweep  |  dropout={DROPOUT}  wd={WEIGHT_DECAY}  momentum={MOMENTUM}  epochs={EPOCHS}",
-        fontsize=10,
+        fontsize=8,
     )
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, "summary_workersweep.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
@@ -94,23 +120,23 @@ def plot_weight_norm(traj_csv_path: str, save_dir: str) -> None:
     """One curve per num_workers: mean weight-norm over epochs with ±std fill."""
     df = pd.read_csv(traj_csv_path)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     for n_workers, grp in df.groupby("num_workers"):
         epochs = grp["epoch"].to_numpy()
         mean   = grp["mean_weight_norm"].to_numpy()
         std    = grp["std_weight_norm"].to_numpy()
-        line, = ax.plot(epochs, mean, linewidth=1.5, label=f"N={n_workers}")
+        line, = ax.plot(epochs, mean, linewidth=1.2, label=f"N={n_workers}")
         ax.fill_between(epochs, mean - std, mean + std, alpha=0.15, color=line.get_color())
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Weight L2 norm  ‖w‖")
     ax.set_title(f"Weight norm over training  |  dropout={DROPOUT}  wd={WEIGHT_DECAY}  momentum={MOMENTUM}")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.grid(True, linewidth=0.4, alpha=0.5)
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, "weight_norm_workersweep.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
@@ -123,12 +149,12 @@ def plot_generalization_gap(traj_csv_path: str, save_dir: str) -> None:
     """
     df = pd.read_csv(traj_csv_path)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(COL2, 3.2))
     for n_workers, grp in df.groupby("num_workers"):
         epochs    = grp["epoch"].to_numpy()
         gap_mean  = grp["mean_test_loss"].to_numpy() - grp["mean_train_loss"].to_numpy()
         gap_std   = np.sqrt(grp["std_test_loss"].to_numpy() ** 2 + grp["std_train_loss"].to_numpy() ** 2)
-        line, = ax.plot(epochs, gap_mean, linewidth=1.5, label=f"N={n_workers}")
+        line, = ax.plot(epochs, gap_mean, linewidth=1.2, label=f"N={n_workers}")
         ax.fill_between(epochs, gap_mean - gap_std, gap_mean + gap_std,
                         alpha=0.15, color=line.get_color())
 
@@ -138,12 +164,12 @@ def plot_generalization_gap(traj_csv_path: str, save_dir: str) -> None:
     ax.set_title(
         f"Generalization gap vs epoch  |  dropout={DROPOUT}  wd={WEIGHT_DECAY}  momentum={MOMENTUM}"
     )
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.grid(True, linewidth=0.4, alpha=0.5)
     fig.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     out_path = os.path.join(save_dir, "gen_gap_workersweep.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"Saved {out_path}")
 
