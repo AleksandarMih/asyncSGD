@@ -142,4 +142,3 @@ dependencies:
       - wordcloud==1.9.6
       - xxhash==3.6.0
       - yarl==1.22.0
-prefix: /Users/alexandre/anaconda3/envs/ee559_venv
