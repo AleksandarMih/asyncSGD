@@ -1,4 +1,4 @@
-# Asynchronous SGD — Optimization for ML (EE-556)
+# Asynchronous SGD — Optimization for ML (CS-439)
 
 An empirical study of how **gradient delay** affects the convergence of SGD on ResNet-20 / CIFAR-10, and how it interacts with momentum, learning-rate scaling, and classical regularizers (dropout, L2). Experiments cover deterministic fixed-lag delays, geometric (stochastic) delays that simulate a pool of asynchronous workers, and true Hogwild!-style async SGD.
 
