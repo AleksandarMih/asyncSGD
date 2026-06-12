@@ -157,6 +157,57 @@ Lower momentum tolerates much higher delay — the (1−µ)² bound is reflected
 
 ---
 
+## Deng et al. (IEEE TPAMI 2025) — "Toward Understanding the Generalizability of Delayed SGD"
+
+**Reference:** Deng, X., Shen, L., Li, S., Sun, T., Li, D., & Tao, D. (2025). Toward Understanding
+the Generalizability of Delayed Stochastic Gradient Descent. *IEEE TPAMI*, Vol. 47, No. 9.
+
+### Core claim
+Asynchronous delay **reduces** generalization error — counter-intuitive but theoretically proven.
+The mechanism is increased algorithmic stability: a model trained with delay is less sensitive
+to any individual training sample.
+
+### Bounds
+- Convex quadratic: generalization error ≤ O((T−τ)/(nτ)) — **improves with τ**
+- Strongly convex: O(1/n) — independent of T and τ entirely
+- Requires learning rate η ≤ 1/(20μ(τ+1)) — safe LR shrinks with delay
+- Extends to bounded random delays (Corollary 1) — same O((T−τ̄)/(nτ̄)) bound
+
+### What this explains in our results
+
+**Train-test gap stays constant (our plot_Q1_train_test_gap).**
+We observed the gap doesn't grow with τ and noted "no implicit regularisation."
+This paper provides the theoretical reason: delay increases stability → gap should not grow,
+and may slightly shrink. Our result is consistent with their theory.
+Cite: "consistent with Deng et al. (2025) who prove that delay improves algorithmic stability."
+
+**Theoretical grounding for LR rescue.**
+Their safe LR requirement η ≤ 1/(20μ(τ+1)) directly motivates scaling η → η/τ at large delays.
+The penalty for violating this bound (instability/poor generalisation) is exactly what we observe
+at τ=64 without LR correction. Cite as motivation for the LR rescue sweep.
+
+**Random delay / geometric setting.**
+Section VI covers bounded random delays — geometric delay satisfies their Assumption 4 (bounded τ_t ≤ τ̄).
+The same stability improvement holds, supporting our claim that geometric delay is "more stable"
+than deterministic at the same E[τ].
+
+### Empirical validation in the paper
+- ResNet-18 on CIFAR-100 (Fig. 1, Fig. 6): generalization error decreases monotonically with τ ∈ {4,8,16,32}
+- FC+MNIST, quadratic LIBSVM datasets: same trend
+- Used fixed LR (no step decay), 16 distributed workers, 5 seeds
+
+### Caveats
+- Theory is for quadratic convex loss; NTK argument used to claim DNN extension (speculative)
+- Fixed LR setting — our LR milestone sensitivity at epoch 30 is outside their framework
+- Their "generalization error" = train loss − test loss (not accuracy gap); direction consistent
+
+### What to cite in the report
+- Q1 Discussion (after train-test gap observation): cite for why the gap doesn't grow
+- LR rescue subsection: cite as theoretical motivation for η → η/(τ+1) scaling
+- Geometric delay discussion: cite Corollary 1 for random delay stability result
+
+---
+
 ## Connections to Our Experiments
 
 | Our Experiment | Paper connection |
@@ -170,3 +221,6 @@ Lower momentum tolerates much higher delay — the (1−µ)² bound is reflected
 | (Future) gap metric | DANA Fig 2: gap reveals staleness better than lag |
 | (Future) DANA-Slim | DANA Table 2: maintains >90% to 16 workers where NAG-ASGD fails |
 | (Future) optimal µ vs k sweep | Liu Fig 2: monotone decrease; verifiable with HogWild! setup |
+| Q1 train-test gap constant across τ | Deng et al. 2025: delay → stability → gap should not grow |
+| Exp C — LR rescue η→η/τ | Deng et al. 2025: safe LR ≤ 1/(20μ(τ+1)) — direct motivation |
+| Geo delay more stable than FIFO | Deng et al. 2025 Corollary 1: random delay has same stability bound |

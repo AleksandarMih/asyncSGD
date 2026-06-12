@@ -308,7 +308,7 @@ def plot_lrs_rescue_sweep(df: pd.DataFrame, out_dir: str) -> None:
 
     for ax, dist, key, label in [
         (axes[0], "fifo",      "tau", "FIFO"),
-        (axes[1], "geometric", "tau", "Geometric"),
+        (axes[1], "geometric", "M",   "Geometric"),
     ]:
         sub = df[df["dist"] == dist].copy()
         if sub.empty:

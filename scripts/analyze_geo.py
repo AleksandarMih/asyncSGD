@@ -119,14 +119,14 @@ def plot_step3_comparison(det: pd.DataFrame, geo: pd.DataFrame, out_dir: str):
         print("[skip] plot_geo_step3_comparison: no data")
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(COL2 * 2, 2.8), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(COL2, 2.8), sharey=True)
     fig.suptitle("Deterministic vs Geometric Delay: Final Test Accuracy",
                  fontsize=13, fontweight="bold")
 
-    for ax, beta in zip(axes, BETAS):
+    for ax, beta in zip(axes, [0.0, 0.9]):
         ax.set_title(f"β = {beta}")
         ax.set_xlabel("E[τ] (average staleness)")
-        ax.set_ylabel("Test Accuracy (%)" if beta == 0.0 else "")
+        ax.set_ylabel("Test Accuracy (%)" if ax is axes[0] else "")
         ax.grid(True, alpha=0.3)
         ax.set_xticks(ETAU_LIST)
 

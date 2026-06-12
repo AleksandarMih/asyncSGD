@@ -11,7 +11,7 @@
 # Output: outputs/step5_ext/
 
 set -euo pipefail
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 SEED=42
 TRAIN="python3 scripts/train.py"
